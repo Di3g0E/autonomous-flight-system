@@ -11,7 +11,7 @@ UNIVERSIDADE FEDERAL DO ABC - SANTO ANDRÉ, BRASIL
 
 NOME: RAFAEL COSTA FERNANDES
 RA: 21201920754
-E−MAIL: COSTA.FERNANDES@UFABC.EDU.BR
+E-MAIL: COSTA.FERNANDES@UFABC.EDU.BR
 
 DESCRIPTION:
     PPO deep learning training algorithm. 
@@ -42,13 +42,13 @@ class PPO:
         self.eps_clip = eps_clip
         self.K_epochs = K_epochs
         
-        self.policy = ActorCritic(state_dim, action_dim, action_std).to(device)
-        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr, betas=betas)
+        self.policy = ActorCritic(state_dim, action_dim, action_std).to(device)         # Crea la NN
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr, betas=betas) # Optimizador que actualiza los pesos del entrenamiento
         
-        self.policy_old = ActorCritic(state_dim, action_dim, action_std).to(device)
+        self.policy_old = ActorCritic(state_dim, action_dim, action_std).to(device)     # Crea una NN idéntica que aprende del entorno y actualiza la política
         self.policy_old.load_state_dict(self.policy.state_dict())
         
-        try:
+        try:    # Si existe un modelo guardado antes continua su entrenamiento
             self.policy.load_state_dict(torch.load('./PPO_continuous_drone.pth',map_location=device))
             self.policy_old.load_state_dict(torch.load('./PPO_continuous_old_drone.pth',map_location=device))
             print('Saved models loaded')
