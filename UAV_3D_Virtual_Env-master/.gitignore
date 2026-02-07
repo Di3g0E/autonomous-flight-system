@@ -40,3 +40,6 @@ logs/
 # Project specific
 results/
 temp/
+
+# Documentation
+PROJECT_HISTORY.md
