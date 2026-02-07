@@ -1,0 +1,100 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quadrotor-sim"
+version = "1.0.0"
+description = "Quadrotor simulation environment with Gymnasium interface and Panda3D visualization"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Rafael Costa Fernandes", email = "costa.fernandes@ufabc.edu.br"}
+]
+maintainers = [
+    {name = "Diego"}
+]
+keywords = ["quadrotor", "drone", "simulation", "gymnasium", "reinforcement-learning", "panda3d"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.21.0",
+    "scipy>=1.7.0",
+    "matplotlib>=3.4.0",
+    "gymnasium>=0.26.0",
+    "opencv-python>=4.5.0",
+    "torch>=1.9.0",
+]
+
+[project.optional-dependencies]
+panda3d = [
+    "panda3d>=1.10.0",
+]
+sb3 = [
+    "stable-baselines3[extra]>=2.0.0",
+    "tensorboard>=2.10.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "isort>=5.10.0",
+    "flake8>=6.0.0",
+]
+all = [
+    "quadrotor-sim[panda3d,sb3,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/rafaelcostafernandes/UAV_3D_Virtual_Env"
+Documentation = "https://github.com/rafaelcostafernandes/UAV_3D_Virtual_Env/tree/master/docs"
+Repository = "https://github.com/rafaelcostafernandes/UAV_3D_Virtual_Env"
+
+[project.scripts]
+train-quadrotor = "scripts.train_sb3:main"
+evaluate-quadrotor = "scripts.evaluate_sb3:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "scripts*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.prc", "*.npz", "*.egg", "*.blend", "*.pth"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.black]
+line-length = 100
+target-version = ['py39', 'py310', 'py311']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+    | \.venv
+    | __pycache__
+    | \.eggs
+    | build
+    | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip_glob = ["**/__pycache__/**", "**/.venv/**"]

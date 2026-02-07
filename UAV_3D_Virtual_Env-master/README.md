@@ -25,70 +25,81 @@ In future versions we plan to include:
 1. Object Colision Detection
 
 
-# How To Use
+# Cómo Empezar (Instalación y Ejecución)
 
-### Basic Usage
-1. Needed Packages:
-    1. Panda3D Version 1.10.6.post2
-    2. Numpy Version 1.19.0
-    3. OpenCv Version 4.2.0
-    4. Scipy Version 1.5.0
-    5. Pytorch Version 1.5.1
-1. Download and unpack the following repository: https://github.com/rafaelcostafrf/UAV_3d_virtual_env
-2. Running the file ./main.py will render the world and show an example of the software capabilities. Keep in mind to run the command from terminal. 
-3. In this example, there are two OpenCV cameras, cam_1 and cam_2. Both cameras are facing down, on-board the UAV. 
-4. It is possible to add more OpenCV cameras, just adding another name to cam_names variable in ./main.py
-5. It is advisable to run the camera calibration algorithm, just delete the camera calibration files in ./config/camera_calibration_*.npz The software will detect the abscence of files and will automatically run the calibration algorithm.
-6. In ./computer_vision/quadrotor_cv.py it is possible to observe an example of camera manipulation in ./computer_vision/quadrotor_cv.computer_vision.init(). 
-7. Setting the camera position is easily done by the cam.setPos(). setPos command is a (X, Y, Z) coordinate system in meters. 
-9. To set a camera parent the reparentTo() command is used. The argument must be a model present in the environment or the render itself. If you parent a camera to a model, the camera will be connected by translation to that model. Parenting a camera to the render keeps it in the same place.  
-10. In computer_vision.img_show() it is possible to observe a simple OpenCv use, showing the camera image with OpenCv commands. 
-11. Any OpenCv algorithm should be usable at this point. 
+Este proyecto requiere Python 3.9+ (se recomienda 3.10 o superior).
 
-### Render Camera Controls
+### 1. Activar el Entorno Virtual
+El proyecto ya incluye un entorno virtual en la carpeta `.v`. Para activarlo:
 
-1. C - Changes camera
-2. WASD - Changes external camera angle
-3. QE - Changes external camera distance
-4. R - Resets Camera
+```powershell
+# En Windows (PowerShell)
+.\.v\Scripts\activate
+```
 
-### Provided Controller
- The quadrotor provided as example is controlled by a neural network trained by a machine learning algorithm. It may be run with simulated states by the flag REAL_CTRL = True or else by MEMS simulation with REAL_CTRL = False. This flag is set in ./main.py
+### 2. Instalar el Proyecto (Si es necesario)
+Si es la primera vez que configuras el proyecto o has borrado el entorno, instala todas las dependencias:
 
-The controller is capable of hovering in the same position, or else initializing in a random state, by changing the flag HOVER = True or False. 
+```powershell
+# Habilitar rutas largas en Windows (ejecutar como ADMIN si da error de rutas largas)
+# New-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
 
-### Usefull Functions
+# Instalación completa
+pip install -e .[all]
+```
 
-./computer_vision/img_2_cv.py:
-    
-    opencv_camera(render, name, frame_interval) - Creates an OpenCv Camera.
-        1. render is self in main.py (Panda3D render)
-        2. name is the camera name
-        3. frame_interval is the capture interval (related to rendered frames) e.g a frame interval of 10 means one OpenCv camera capture every 10 rendered frames.
-        
-    get_image(target_frame=True) - returns a True and an Image if the algorithm was able to receive an image, returns False and None if no image was found. 
-        1. target_frame=True - Sets the buffer inactive for the next (frame_interval-1) frames (increasing render performance)
-        2. target_frame=False - Keeps the buffer active, reducing performance, but may be usefull in some scenarios.
-        
-./computer_vision/camera_calibration.py
-    
-    calibration() - Calibrates a camera, given its class and the render. The calibration is based on pictures of a ChessBoard pattern in various angles and distances.
-    
-./computer_vision/cameras_setup.py
-    
-    cameras(): Automates the process of creating the camera and calibrating it, the user only concern is naming the cameras, uses both opencv_camera() and calibration() functions. 
-    
-        1. To access the camera calibration matrixes, the user should call cameras.opencv_cam_cal[i].mtx for intrinsic matrix and cameras.opencv_cam_cal[i].dist for the distortion matrix, being [i] the index of the camera. 
-        2. To access the camera image the user should call cameras_setup.opencv_cameras[i].get_image() being [i] the camera index.
-    
-./environment/position.py
-    
-    Everything in this file is about the dynamics and control of the presented quadrotor. The discussion of its intricacies isn't the scope of this project. If you wish to change the UAV dynamics, this file should be used just as a rough reference. 
-    The most important functions are:
-        1. self.setPos(X, Y, Z) in meters
-        2. self.setHpr(Yaw, Pitch, Roll) in degrees
-    Your UAV model should output that information. The functions above update the 3D model position and attitude in the render. 
-    
-### Warnings and Engine Functionality
-1. The engine runs entirely by rendered frames. When developing an algorithm, keep that in mind. The developed function will be run once per frame. For more information please refer to Panda3D taskMgr (task manager) funcion, particularly useful commands are task.cont and task.done. 
-2. The frame_interval variable is heavily performance related. Its function is to limit the OpenCv camera capture to 1 in each 10 of the Panda3D frames. Faster tasks might need more OpenCv frames, slower taks might need less. This variable impacts performance because all the OpenCv frames are being sent to RAM, slowing the process down, compared to running it in a dedicated GPU. 
+### 3. Ejecutar el Programa Principal
+Una vez activado el entorno, lanza la simulación 3D:
+
+```powershell
+python scripts/run_simulation.py
+```
+
+---
+
+### Estructura del Proyecto
+El proyecto está organizado siguiendo los estándares modernos de Python:
+
+- **`src/`**: Carpeta principal del código fuente.
+  - **`envs/`**: Entornos Gymnasium (Quadrotor, Panda3D, Detección de Colisiones).
+  - **`agents/`**: Implementaciones de agentes de RL y utilidades de entrenamiento.
+  - **`simulation/`**: Utilidades de Panda3D (setup del mundo, cámara, física).
+  - **`vision/`**: Módulos de visión artificial.
+- **`scripts/`**: Scripts ejecutables para simulación (`run_simulation.py`), entrenamiento (`train_sb3.py`) y evaluación.
+- **`tests/`**: Suite de pruebas para verificar la integridad del sistema.
+- **`assets/`**: Recursos estáticos (modelos 3D en `models/` y texturas en `textures/`).
+- **`weights/`**: Pesos de los modelos entrenados.
+
+---
+
+### Ejecutar Pruebas y Scripts Adicionales
+Para verificar la integridad o realizar entrenamientos:
+
+```bash
+# Ejecutar los tests
+pytest tests/
+
+# Entrenar un agente con Stable-Baselines3
+python scripts/train_sb3.py
+
+# Ver un agente ya entrenado
+python scripts/evaluate_sb3.py
+```
+
+# Guía de Uso del Simulador
+
+### Controles de Cámara (Ventana 3D)
+1. **C**: Cambia entre las diferentes cámaras (on-board/externas).
+2. **WASD**: Cambia el ángulo de la cámara externa.
+3. **QE**: Cambia la distancia (zoom) de la cámara externa.
+4. **R**: Resetea la posición de la cámara.
+
+### Calibración de Cámaras
+El software detecta automáticamente si faltan los archivos de calibración en `./config/camera_calibration_*.npz` y, si es necesario, ejecutará el algoritmo de calibración tomando capturas aleatorias del patrón de tablero de ajedrez en el mundo 3D.
+
+### Nota sobre el Controlador
+El quadrotor se controla mediante una red neuronal entrenada con PPO. Puedes configurar el comportamiento en `scripts/run_simulation.py`:
+- **REAL_CTRL = True**: Usa los estados reales del simulador.
+- **REAL_CTRL = False**: Usa la simulación de sensores (acelerómetro, giroscopio, GPS).
+- **HOVER = True**: El dron despega y se mantiene estable en el sitio.
+- **HOVER = False**: El dron comienza en un estado inicial aleatorio.

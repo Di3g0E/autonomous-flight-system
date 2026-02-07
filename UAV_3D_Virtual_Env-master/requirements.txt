@@ -1,0 +1,13 @@
+# Este archivo se mantiene por compatibilidad. 
+# Se recomienda instalar el proyecto como un paquete:
+# pip install -e .[all]
+
+gymnasium
+numpy
+scipy
+matplotlib
+opencv-python
+torch
+panda3d
+stable-baselines3[extra]
+tensorboard
