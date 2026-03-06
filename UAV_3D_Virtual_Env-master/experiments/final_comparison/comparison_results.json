@@ -1,0 +1,24 @@
+{
+  "baseline": {
+    "agent_type": "baseline_state_only",
+    "algorithm": "PPO",
+    "observation": "state (13D)",
+    "total_timesteps": 500000,
+    "training_time_seconds": 2599.6744520664215,
+    "n_envs": 4,
+    "policy_params": 10441,
+    "final_episodes": 969,
+    "final_collision_rate": 0.6171310629514963
+  },
+  "depth": {
+    "agent_type": "depth_augmented",
+    "algorithm": "PPO",
+    "observation": "state (13D) + depth (64x64x1)",
+    "total_timesteps": 500000,
+    "training_time_seconds": 8497.63814663887,
+    "n_envs": 4,
+    "policy_params": 106985,
+    "final_episodes": 1041,
+    "final_collision_rate": 0.6186359269932757
+  }
+}

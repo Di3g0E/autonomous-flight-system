@@ -1,0 +1,11 @@
+{
+  "agent_type": "baseline_state_only",
+  "algorithm": "PPO",
+  "observation": "state (13D)",
+  "total_timesteps": 500000,
+  "training_time_seconds": 2599.6744520664215,
+  "n_envs": 4,
+  "policy_params": 10441,
+  "final_episodes": 969,
+  "final_collision_rate": 0.6171310629514963
+}

@@ -159,6 +159,9 @@ class quad(gym.Env):
         self.zero_control = np.ones(4)*(2/T2WR - 1)             #Neutral Action (used in reset and absolute action penality) 
         self.direct_control_flag = direct_control
         
+        # Target position (default: origin for backward compatibility)
+        self.target_pos = np.zeros(3)
+        
         # Rendering
         self.render_mode = render_mode
         
@@ -496,10 +499,13 @@ class quad(gym.Env):
         action = self.action
         action_hist = self.action_hist
         
-        shaping = 100*(-norm(position/BB_POS)-norm(velocity/BB_VEL)-norm(psi/4)-0.3*norm(euler_angles[0:2]/BB_ANG))
+        # Position error relative to target (backward compatible: target defaults to [0,0,0])
+        pos_error = position - self.target_pos
+        
+        shaping = 100*(-norm(pos_error/BB_POS)-norm(velocity/BB_VEL)-norm(psi/4)-0.3*norm(euler_angles[0:2]/BB_ANG))
         
         #CASCADING REWARDS
-        r_state = np.concatenate((position,[psi]))        
+        r_state = np.concatenate((pos_error,[psi]))        
         for TR_i,TR_Pi in zip(TR,TR_P): 
             if norm(r_state) < norm(np.ones(len(r_state))*TR_i):
                 shaping += TR_Pi
@@ -524,7 +530,7 @@ class quad(gym.Env):
         
         #SOLUTION ACHIEVED?
         target_state = 12*(TR[0]**2)
-        current_state = np.sum(np.square(np.concatenate((position, velocity, euler_angles, body_ang_vel))))      
+        current_state = np.sum(np.square(np.concatenate((pos_error, velocity, euler_angles, body_ang_vel))))      
 
         if current_state < target_state:
             self.reward = +500
@@ -560,8 +566,16 @@ class quad(gym.Env):
         """
         Clean up resources.
         """
-        if hasattr(self, 'figure'):
-            plt.close(self.figure)
+        pass
+    
+    def set_target(self, target_pos):
+        """
+        Set the target position for the controller.
+        
+        Args:
+            target_pos: np.array of shape (3,) with [x, y, z] target coordinates
+        """
+        self.target_pos = np.array(target_pos, dtype=np.float64)
          
             
 class sensor():

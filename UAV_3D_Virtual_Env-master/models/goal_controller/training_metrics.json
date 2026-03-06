@@ -1,0 +1,2207 @@
+[
+  {
+    "timestep": 2048,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 0.6728748739379004,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 20.6892081777996
+  },
+  {
+    "timestep": 4096,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.233875243203019,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 22.096718942161043
+  },
+  {
+    "timestep": 6144,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.0841318913458746,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 21.86270127874853
+  },
+  {
+    "timestep": 8192,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.428567777862924,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 20.812319197733114
+  },
+  {
+    "timestep": 10240,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.980237359541275,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 20.30436700082334
+  },
+  {
+    "timestep": 12288,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.0292501318795235,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 19.97386554112873
+  },
+  {
+    "timestep": 14336,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.042100306715423,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 19.73679795917579
+  },
+  {
+    "timestep": 16384,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.018201785420738,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 19.58245852187061
+  },
+  {
+    "timestep": 18432,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.960487570440696,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 19.456487387154848
+  },
+  {
+    "timestep": 20480,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.003055665929222,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 19.123976774879427
+  },
+  {
+    "timestep": 22528,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.905245244292173,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.600578172577404
+  },
+  {
+    "timestep": 24576,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.1718920015169174,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.182496926825934
+  },
+  {
+    "timestep": 26624,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.3113148832532646,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.850853283030936
+  },
+  {
+    "timestep": 28672,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.2278120872362526,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.55929507259957
+  },
+  {
+    "timestep": 30720,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.110425563727839,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.335114243385565
+  },
+  {
+    "timestep": 32768,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.146582204418118,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.136977700145824
+  },
+  {
+    "timestep": 34816,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.3504279292504116,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 16.97406469237202
+  },
+  {
+    "timestep": 36864,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.2595093105312554,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 16.824069681346007
+  },
+  {
+    "timestep": 38912,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.3547486543080187,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 16.907144112493846
+  },
+  {
+    "timestep": 40960,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.513561868725854,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 16.99269069758597
+  },
+  {
+    "timestep": 43008,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.511333208385391,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.079556931631338
+  },
+  {
+    "timestep": 45056,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.447890510655357,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.152670518699903
+  },
+  {
+    "timestep": 47104,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.5155432113858938,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.217531595635688
+  },
+  {
+    "timestep": 49152,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.533735710301943,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.27759444735019
+  },
+  {
+    "timestep": 51200,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.5588795324648412,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.340628497757823
+  },
+  {
+    "timestep": 53248,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.558317235276265,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.402334935216437
+  },
+  {
+    "timestep": 55296,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.6289080913500134,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.46182510057419
+  },
+  {
+    "timestep": 57344,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.59590510595108,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.504038912234158
+  },
+  {
+    "timestep": 59392,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.587085338406804,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.548597542892853
+  },
+  {
+    "timestep": 61440,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.555084639393754,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.588521510723538
+  },
+  {
+    "timestep": 63488,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.5711544114390947,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.62550339788864
+  },
+  {
+    "timestep": 65536,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.6636160430139,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.66416108294468
+  },
+  {
+    "timestep": 67584,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.7106946183096543,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.703297928772788
+  },
+  {
+    "timestep": 69632,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.6385662724649364,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.733905678150023
+  },
+  {
+    "timestep": 71680,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.662987670336649,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.765488168623676
+  },
+  {
+    "timestep": 73728,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.6187317650463067,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.79981274488944
+  },
+  {
+    "timestep": 75776,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.537914245952622,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.82439851714609
+  },
+  {
+    "timestep": 77824,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.6050694248478985,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.856059558152126
+  },
+  {
+    "timestep": 79872,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.58199057545432,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.87955758353909
+  },
+  {
+    "timestep": 81920,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.518519414193423,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.914134714910812
+  },
+  {
+    "timestep": 83968,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.5051332098424344,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.943653127219342
+  },
+  {
+    "timestep": 86016,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.5291010769887685,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 17.981105324408535
+  },
+  {
+    "timestep": 88064,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.502178092534478,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.01761104507274
+  },
+  {
+    "timestep": 90112,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.4951463255763433,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.051206692672263
+  },
+  {
+    "timestep": 92160,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.4825159635755263,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.0759196958491
+  },
+  {
+    "timestep": 94208,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.4779756247644893,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.100411306083366
+  },
+  {
+    "timestep": 96256,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.4749712523141327,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.118215087619056
+  },
+  {
+    "timestep": 98304,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.446563078231643,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.145222347931366
+  },
+  {
+    "timestep": 100352,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.4755865928416583,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.173198787143228
+  },
+  {
+    "timestep": 102400,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.4316192845588533,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.199138748959218
+  },
+  {
+    "timestep": 104448,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.5016821178150574,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.16478919718923
+  },
+  {
+    "timestep": 106496,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.451762047510814,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.170544621972518
+  },
+  {
+    "timestep": 108544,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.4893223509278304,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.173479720741504
+  },
+  {
+    "timestep": 110592,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.4519959416372346,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.181329963421696
+  },
+  {
+    "timestep": 112640,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.473600165013285,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.187952661426408
+  },
+  {
+    "timestep": 114688,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.45850481762894,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.19655600668114
+  },
+  {
+    "timestep": 116736,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.426712235637621,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.20474873532228
+  },
+  {
+    "timestep": 118784,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.441908643381268,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.2156513073436
+  },
+  {
+    "timestep": 120832,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.432065998019721,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.222559888142136
+  },
+  {
+    "timestep": 122880,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.406699035300024,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.229277886899105
+  },
+  {
+    "timestep": 124928,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.3847708942739145,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.229889450309702
+  },
+  {
+    "timestep": 126976,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.3607767117587373,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.236733265618568
+  },
+  {
+    "timestep": 129024,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.2912167321221046,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.240691467884343
+  },
+  {
+    "timestep": 131072,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.281599154034881,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.2453322703725
+  },
+  {
+    "timestep": 133120,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.2749767570886537,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.25148462264493
+  },
+  {
+    "timestep": 135168,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.2348394044583033,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.256188052611943
+  },
+  {
+    "timestep": 137216,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.1342992132828997,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.261021318526883
+  },
+  {
+    "timestep": 139264,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.1939373668556574,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.264193605393647
+  },
+  {
+    "timestep": 141312,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.147712592253123,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.270186864668037
+  },
+  {
+    "timestep": 143360,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.0899643564824038,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.27526506254816
+  },
+  {
+    "timestep": 145408,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.0476078505491593,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.276523689220173
+  },
+  {
+    "timestep": 147456,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 3.0421902533621927,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.28421399042268
+  },
+  {
+    "timestep": 149504,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.9544581970461166,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.293472251138027
+  },
+  {
+    "timestep": 151552,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.91361423586231,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.299250152599054
+  },
+  {
+    "timestep": 153600,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.8770104513461625,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.305161913148915
+  },
+  {
+    "timestep": 155648,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.8454703039234635,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.30916421678918
+  },
+  {
+    "timestep": 157696,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.7784344638984817,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.31190695004153
+  },
+  {
+    "timestep": 159744,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.7456340901358294,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.3147970461346
+  },
+  {
+    "timestep": 161792,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.7317455973701703,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.315390883205648
+  },
+  {
+    "timestep": 163840,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.7453489393733657,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.316543753285327
+  },
+  {
+    "timestep": 165888,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.7122533829729907,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.321140010946092
+  },
+  {
+    "timestep": 167936,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.633745518453461,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.32438196571982
+  },
+  {
+    "timestep": 169984,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.5776291214097595,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.32519547211683
+  },
+  {
+    "timestep": 172032,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.6126688193646466,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.328420029695266
+  },
+  {
+    "timestep": 174080,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.5970615960205907,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.328459191566182
+  },
+  {
+    "timestep": 176128,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.6198312054004096,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.33289097690744
+  },
+  {
+    "timestep": 178176,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.6427299513556797,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.337494804290287
+  },
+  {
+    "timestep": 180224,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.5479253536336337,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.337863267292168
+  },
+  {
+    "timestep": 182272,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.5623414143915686,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.339224223412895
+  },
+  {
+    "timestep": 184320,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.5646018811226376,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.341043268748603
+  },
+  {
+    "timestep": 186368,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.588319589285241,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.340326873835945
+  },
+  {
+    "timestep": 188416,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.505200820798523,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.338632491164276
+  },
+  {
+    "timestep": 190464,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.5147017743144082,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.338578169078364
+  },
+  {
+    "timestep": 192512,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.4791719957824196,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.343101011495776
+  },
+  {
+    "timestep": 194560,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.452599958565137,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.342117429429937
+  },
+  {
+    "timestep": 196608,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.421414029312986,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.343821237438863
+  },
+  {
+    "timestep": 198656,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.3978476765432033,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.34673370636948
+  },
+  {
+    "timestep": 200704,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.409339479451624,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.354152253915004
+  },
+  {
+    "timestep": 202752,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.380122993764669,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.36291935296026
+  },
+  {
+    "timestep": 204800,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.373192924464069,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.371107156899818
+  },
+  {
+    "timestep": 206848,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.3552593057640596,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.287254913435937
+  },
+  {
+    "timestep": 208896,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.3436562909829233,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.294686495006477
+  },
+  {
+    "timestep": 210944,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.2999627892277443,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.299650502316723
+  },
+  {
+    "timestep": 212992,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.3043441435808485,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.307243328626893
+  },
+  {
+    "timestep": 215040,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.2982274134171607,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.313892991178573
+  },
+  {
+    "timestep": 217088,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.2898355012233678,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.320873316760935
+  },
+  {
+    "timestep": 219136,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.3121537330279414,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.328356201769825
+  },
+  {
+    "timestep": 221184,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.2550219773878637,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.337188219358676
+  },
+  {
+    "timestep": 223232,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.247790769669999,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.344980674559732
+  },
+  {
+    "timestep": 225280,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.342703674235089,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.355662392399783
+  },
+  {
+    "timestep": 227328,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.3584332619867574,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.362778308642095
+  },
+  {
+    "timestep": 229376,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.3286740649356,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.368158510229424
+  },
+  {
+    "timestep": 231424,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.3168673564769318,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.376248355996136
+  },
+  {
+    "timestep": 233472,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.3214665891275423,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.379863938065945
+  },
+  {
+    "timestep": 235520,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.3402668908252875,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.381494500280233
+  },
+  {
+    "timestep": 237568,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.3495250461902213,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.38574618130664
+  },
+  {
+    "timestep": 239616,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.3373793330859596,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.387901405781985
+  },
+  {
+    "timestep": 241664,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.297655290682983,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.387585396501482
+  },
+  {
+    "timestep": 243712,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.2524308301884988,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.387223739361758
+  },
+  {
+    "timestep": 245760,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.204414905132781,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.389150924166707
+  },
+  {
+    "timestep": 247808,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.214779979446124,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.391197737919295
+  },
+  {
+    "timestep": 249856,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.230467718311337,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.393488283545672
+  },
+  {
+    "timestep": 251904,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.2494386195754785,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.396953398207096
+  },
+  {
+    "timestep": 253952,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.2460193525220076,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.402758357357875
+  },
+  {
+    "timestep": 256000,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.2311168414144635,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.408544718450063
+  },
+  {
+    "timestep": 258048,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.2129368780732626,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.407524311597548
+  },
+  {
+    "timestep": 260096,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.1968967761191793,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.410002586977
+  },
+  {
+    "timestep": 262144,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.212275693720126,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.411231245205737
+  },
+  {
+    "timestep": 264192,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.202682853401617,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.41252153544159
+  },
+  {
+    "timestep": 266240,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.184431265192873,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.414592627847146
+  },
+  {
+    "timestep": 268288,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.1819939932416568,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.4149317766786
+  },
+  {
+    "timestep": 270336,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.1652879199588426,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.41482388777942
+  },
+  {
+    "timestep": 272384,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.148694820942613,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.414886865497255
+  },
+  {
+    "timestep": 274432,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.1161488845288283,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.414524269579033
+  },
+  {
+    "timestep": 276480,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.08055702536213,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.415815691559914
+  },
+  {
+    "timestep": 278528,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.0512883136355056,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.418555679602264
+  },
+  {
+    "timestep": 280576,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.0423836349634046,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.421316984867502
+  },
+  {
+    "timestep": 282624,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.056350379947472,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.42280918908247
+  },
+  {
+    "timestep": 284672,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.0075429138589778,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.42312214978076
+  },
+  {
+    "timestep": 286720,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.042492710622609,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.425072932218093
+  },
+  {
+    "timestep": 288768,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9765171922691345,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.42949459234435
+  },
+  {
+    "timestep": 290816,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.003623426717261,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.42956212055657
+  },
+  {
+    "timestep": 292864,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9838376163252462,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.431717989051798
+  },
+  {
+    "timestep": 294912,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9990890431029775,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.43316024328707
+  },
+  {
+    "timestep": 296960,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.004603458620877,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.433441329196143
+  },
+  {
+    "timestep": 299008,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.993822324280738,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.434035785575386
+  },
+  {
+    "timestep": 301056,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.987160789799806,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.435013875988975
+  },
+  {
+    "timestep": 303104,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.970866426224998,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.439754271169683
+  },
+  {
+    "timestep": 305152,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.913550873652996,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.443367675369032
+  },
+  {
+    "timestep": 307200,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9229536532848794,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.448828079823368
+  },
+  {
+    "timestep": 309248,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9196014207668812,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.42874363311562
+  },
+  {
+    "timestep": 311296,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8807732400251103,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.430648739221766
+  },
+  {
+    "timestep": 313344,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8725825746902998,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.432218054567194
+  },
+  {
+    "timestep": 315392,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8352658641303032,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.43187105605247
+  },
+  {
+    "timestep": 317440,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8197163322572283,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.43196586609459
+  },
+  {
+    "timestep": 319488,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8197423594288051,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.43200953436303
+  },
+  {
+    "timestep": 321536,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.789771008619165,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.43140712694035
+  },
+  {
+    "timestep": 323584,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8218408087175084,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.432517218549876
+  },
+  {
+    "timestep": 325632,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8180794500157333,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.432534441986515
+  },
+  {
+    "timestep": 327680,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7589828128028973,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.433640437623215
+  },
+  {
+    "timestep": 329728,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7487555905818641,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.433807375285728
+  },
+  {
+    "timestep": 331776,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.6974852625739552,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.434629383581374
+  },
+  {
+    "timestep": 333824,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.723962608526156,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.434901043316454
+  },
+  {
+    "timestep": 335872,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7158786288661048,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.437112976949383
+  },
+  {
+    "timestep": 337920,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7329504327611858,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.437287115709545
+  },
+  {
+    "timestep": 339968,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.746220941036183,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.43678208522098
+  },
+  {
+    "timestep": 342016,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7532413484609604,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.437274254784565
+  },
+  {
+    "timestep": 344064,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7338331585891422,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.43971286475037
+  },
+  {
+    "timestep": 346112,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7493074601767222,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.44239328139172
+  },
+  {
+    "timestep": 348160,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7408270262695935,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.445479437833917
+  },
+  {
+    "timestep": 350208,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.727193047919014,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.446401615320955
+  },
+  {
+    "timestep": 352256,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.6913958191128515,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.448880359079755
+  },
+  {
+    "timestep": 354304,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.6829666975174493,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.448395194017824
+  },
+  {
+    "timestep": 356352,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.6733348612889223,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.45002234522025
+  },
+  {
+    "timestep": 358400,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.6720445252156833,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.452604001320296
+  },
+  {
+    "timestep": 360448,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.6995588121134577,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.454538970469205
+  },
+  {
+    "timestep": 362496,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7335223636547097,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.45537541873403
+  },
+  {
+    "timestep": 364544,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7460456710868697,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.45710382934435
+  },
+  {
+    "timestep": 366592,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.741807221176291,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.45792168219683
+  },
+  {
+    "timestep": 368640,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7442755187516494,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.460212998344108
+  },
+  {
+    "timestep": 370688,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7315402938497766,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.46016026524922
+  },
+  {
+    "timestep": 372736,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7055876703177293,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.461077664130617
+  },
+  {
+    "timestep": 374784,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7609608444672387,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.462155636808713
+  },
+  {
+    "timestep": 376832,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7695507769264247,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.46432787030881
+  },
+  {
+    "timestep": 378880,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.7627898563805806,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.46582966615844
+  },
+  {
+    "timestep": 380928,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8124888207613077,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.468951579439473
+  },
+  {
+    "timestep": 382976,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8234160590756971,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.468919523534222
+  },
+  {
+    "timestep": 385024,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8316792438677687,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.47124976511477
+  },
+  {
+    "timestep": 387072,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8496292117788427,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.47340957464385
+  },
+  {
+    "timestep": 389120,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8142078299535618,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.47354962395651
+  },
+  {
+    "timestep": 391168,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8335004069058038,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.475224565424757
+  },
+  {
+    "timestep": 393216,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8458604400906378,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.477013438582954
+  },
+  {
+    "timestep": 395264,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.829152755476631,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.478564159383087
+  },
+  {
+    "timestep": 397312,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8201345163204152,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.481182493155117
+  },
+  {
+    "timestep": 399360,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8150834761293728,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.481169092582455
+  },
+  {
+    "timestep": 401408,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8218450212525932,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.48158064658645
+  },
+  {
+    "timestep": 403456,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8468392522912638,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.48226449277789
+  },
+  {
+    "timestep": 405504,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9122148161640582,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.482934748750566
+  },
+  {
+    "timestep": 407552,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9779784004072345,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.484351740870274
+  },
+  {
+    "timestep": 409600,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.992264058937664,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.484272332634106
+  },
+  {
+    "timestep": 411648,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9607450565270133,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.437438703015086
+  },
+  {
+    "timestep": 413696,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9653180072531073,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.440560087507347
+  },
+  {
+    "timestep": 415744,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9651197061075079,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.440578268031278
+  },
+  {
+    "timestep": 417792,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9726590393083308,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.442712048671726
+  },
+  {
+    "timestep": 419840,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.978016826844903,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.44418721884105
+  },
+  {
+    "timestep": 421888,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9716730643042055,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.44576493643812
+  },
+  {
+    "timestep": 423936,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.971140202879878,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.44751698231075
+  },
+  {
+    "timestep": 425984,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9670071891732601,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.4504081569524
+  },
+  {
+    "timestep": 428032,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.969047323117695,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.452692243478257
+  },
+  {
+    "timestep": 430080,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9130704758702333,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.454619593040047
+  },
+  {
+    "timestep": 432128,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9802313837403247,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.45684011630784
+  },
+  {
+    "timestep": 434176,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.0100754425384224,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.456555399395935
+  },
+  {
+    "timestep": 436224,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9834098488357745,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.455817351273986
+  },
+  {
+    "timestep": 438272,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9870377410867663,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.45667316795856
+  },
+  {
+    "timestep": 440320,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9500078745049083,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.45727751669591
+  },
+  {
+    "timestep": 442368,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9308717051127113,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.458651791939868
+  },
+  {
+    "timestep": 444416,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.927218305459867,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.460657068713388
+  },
+  {
+    "timestep": 446464,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9430751795005181,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.46101743898984
+  },
+  {
+    "timestep": 448512,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9342466923685395,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.46108616819349
+  },
+  {
+    "timestep": 450560,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9594561198328124,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.46213965507765
+  },
+  {
+    "timestep": 452608,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9587396351393511,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.46184211025002
+  },
+  {
+    "timestep": 454656,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.984731608112486,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.46196937993476
+  },
+  {
+    "timestep": 456704,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9937590761227104,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.461456011492874
+  },
+  {
+    "timestep": 458752,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9915720929293483,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.461369392955476
+  },
+  {
+    "timestep": 460800,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.024824140824025,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.461414807593442
+  },
+  {
+    "timestep": 462848,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.0040784292725853,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.461721802839467
+  },
+  {
+    "timestep": 464896,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9743130231161259,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.462719598312663
+  },
+  {
+    "timestep": 466944,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9695879292530125,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.463287869875092
+  },
+  {
+    "timestep": 468992,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9632969799191304,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.463566783770162
+  },
+  {
+    "timestep": 471040,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9524108286655342,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.466336364138026
+  },
+  {
+    "timestep": 473088,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9411530828274264,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.468278581516486
+  },
+  {
+    "timestep": 475136,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.0036247706897736,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.467943839470507
+  },
+  {
+    "timestep": 477184,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.954640089826105,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.467848167390027
+  },
+  {
+    "timestep": 479232,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.953370495385691,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.468713475905968
+  },
+  {
+    "timestep": 481280,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9579296461273383,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.470979330396574
+  },
+  {
+    "timestep": 483328,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.8986218042003855,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.471153055590683
+  },
+  {
+    "timestep": 485376,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9648866378603702,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.472472015395326
+  },
+  {
+    "timestep": 487424,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9750773036248166,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.472469046446232
+  },
+  {
+    "timestep": 489472,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 1.9821292711779988,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.47240022251418
+  },
+  {
+    "timestep": 491520,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.012250894118641,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.47271693290447
+  },
+  {
+    "timestep": 493568,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.024315568946783,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.471865949438484
+  },
+  {
+    "timestep": 495616,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.0149138652689853,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.47225510990228
+  },
+  {
+    "timestep": 497664,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.0481914809982773,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.472256698948733
+  },
+  {
+    "timestep": 499712,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.0607940753029443,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.47212996183327
+  },
+  {
+    "timestep": 500000,
+    "episodes": 0,
+    "mean_reward": 0,
+    "mean_distance": 2.110013831353859,
+    "arrival_rate": 0.0,
+    "target_range": 1.0,
+    "fps": 18.40892085060782
+  }
+]

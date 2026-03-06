@@ -1,0 +1,12 @@
+{
+  "total_timesteps": 500000,
+  "total_episodes": 0,
+  "training_time_seconds": 27161.83030986786,
+  "final_mean_reward": 0,
+  "final_mean_distance": 2.110013831353859,
+  "final_arrival_rate": 0.0,
+  "final_target_range": 1.0,
+  "target_mode": "fixed",
+  "policy_params": 257161,
+  "recorded_episodes": 5
+}

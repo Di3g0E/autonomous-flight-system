@@ -1,0 +1,16 @@
+\begin{table}[h]
+\centering
+\caption{Comparación de controladores RL: Estado vs Estado + Profundidad}
+\label{tab:rl_comparison}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Métrica} & \textbf{Baseline (Estado)} & \textbf{Depth (Estado+Prof.)} \\
+\midrule
+Observación & Estado 13D & Estado 13D + Depth 64×64 \\
+Parámetros de la política & 10,441 & 106,985 \\
+Tiempo de entrenamiento (s) & 2600 & 8498 \\
+Episodios totales & 969 & 1,041 \\
+Tasa de colisión & 0.617 & 0.619 \\
+\bottomrule
+\end{tabular}
+\end{table}
