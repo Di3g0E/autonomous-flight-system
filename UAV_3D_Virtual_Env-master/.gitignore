@@ -34,12 +34,20 @@ venv.bak/
 .v/
 
 # Logs
-logs/
+*logs/
 *.log
 
 # Project specific
 results/
 temp/
+data/
+
+# modelos de experiments que no son best_model.zip o depth_model.zip
+*_steps.zip
+*checkpoint*.pth
+
+# git
+.gitignore
 
 # Documentation
 PROJECT_HISTORY.md
