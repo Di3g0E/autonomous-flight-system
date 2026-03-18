@@ -55,7 +55,7 @@ def parse_args():
                         help='Number of RGB-Depth pairs to collect')
     parser.add_argument('--output-dir', type=str, default='./data/depth_real',
                         help='Output directory for dataset')
-    parser.add_argument('--image-size', type=int, nargs=2, default=[64, 64],
+    parser.add_argument('--image-size', type=int, nargs=2, default=[32, 32],
                         help='Output image size (width height)')
     parser.add_argument('--val-split', type=float, default=0.1,
                         help='Validation split ratio')

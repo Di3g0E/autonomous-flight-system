@@ -793,3 +793,300 @@ Entrenar un agente RL que navegue hacia un **punto objetivo visible** en la esce
 2. Aumentar el tamaño visual del target (radio mayor o marcador más visible).
 3. Considerar usar la imagen a mayor resolución o un target más contrastante.
 4. Explorar pre-entrenamiento supervisado de la CNN con etiquetas de dirección al target.
+
+---
+
+## [Fecha: 2026-03-16] - Depuración de Entrenamiento Visual y Cambio a "Follow Mode" (Fase 6)
+
+### Motivación
+Optimizar el entrenamiento tras una sesión de 18 horas que reveló un estancamiento en el aprendizaje (plateau). El objetivo evoluciona de "alcanzar" un objetivo a "seguir y filmar" (Follow Mode), alineándose con el caso de uso real de un dron de seguimiento.
+
+### Descripción
+- **Soporte de Monitorización**: Integración definitiva del wrapper `Monitor` de Stable-Baselines3. Esto corrigió el error donde el contador de episodios permanecía en 0. Se implementó el uso de `.unwrapped` para permitir que los callbacks sigan accediendo a las cámaras de Panda3D a través del wrapper.
+- **Diagnóstico del "Plateau" de 18h**: Análisis de un entrenamiento de 380,000 pasos que se quedó estancado a 2.7m del objetivo. Se identificó que la recompensa de "Scale Control" (6% del tamaño de imagen) penalizaba al dron por acercarse más, creando un equilibrio artificial que impedía la llegada.
+- **Línea de Seguridad (Interrupt Safety)**: Modificación crítica en `train_goal_controller.py` para invocar `save_metrics()` dentro del manejador de `KeyboardInterrupt`. Esto garantiza que los datos acumulados durante horas en la RAM se vuelquen al archivo `training_metrics.json` al pulsar Ctrl+C.
+- **Rediseño para "Follow Mode"**: 
+  - **Eliminación del Arrival Bonus**: Se quita el premio por colisión (+500) para evitar que el dron choque con lo que debe filmar.
+  - **Recompensa de Encuadre**: Se incrementa el peso del centrado visual (+3.0) y se ajusta la escala ideal al 8% de la imagen.
+  - **Penalización por Proximidad**: Nueva penalización si el objeto ocupa >20% de la imagen (distancia de seguridad).
+- **Movimiento Aleatorio (Ornstein-Uhlenbeck)**: Implementación de trayectorias aleatorias e impredecibles para el objetivo en `_update_target()`, sustituyendo las trayectorias circulares deterministas.
+- **Sistema de Datos para TFG**: Diseño de un pipeline de post-procesamiento que genera automáticamente:
+  - `training_log.csv`: Datos crudos para análisis estadístico.
+  - `training_plots.png`: Gráficas de evolución de recompensa, distancia y centrado para la memoria.
+
+### Archivos Afectados
+- `scripts/train_goal_controller.py` (Modificado: Monitor wrapper, safety line)
+- `src/envs/panda3d_quadrotor_env.py` (Modificado: rewards, OU process, removal of arrival bonus)
+- `PROJECT_HISTORY.md` (Modificado: esta entrada)
+
+### Resultados/Observaciones
+- **Convergencia Visual**: El dron ha demostrado ser extremadamente eficiente en el centrado visual, incluso manteniendo el objetivo en el aire durante miles de pasos.
+- **Aprendizaje de Distancia**: Se ha validado que el dron "respeta" la distancia impuesta por la función de recompensa, lo que confirma que el sistema es altamente moldeable mediante Reward Shaping.
+- **Seguridad de Datos**: La implementación de la línea de ahorro de métricas elimina el riesgo de pérdida de días de entrenamiento por fallos de energía o interrupciones manuales.
+- **Preparación de Memoria**: El sistema de generación de gráficas automatiza una de las partes más laboriosas de la redacción del TFG.
+
+---
+
+## [Fecha: 2026-03-16] - Correcciones Críticas y Preparación para Entrenamiento Final (Fase 6b)
+
+### Motivación
+Resolver los últimos problemas identificados que impedían un entrenamiento correcto del Follow Mode, y preparar el sistema para un entrenamiento definitivo documentable para el TFG.
+
+### Descripción
+
+#### Correcciones en el sistema de reward
+
+- **Neutralización del bonus +500 del base env**: En filming mode, el base env (`quadrotor_env.py`) premia con +500 al dron cuando hoverea perfecto en el origen (su `target_pos=[0,0,0]`). Este bonus distorsionaba la señal de reward visual (+6.0 max) ya que el dron aprendía a quedarse quieto en el origen en lugar de seguir el target. Se detecta `self.base_env.solved` tras cada `base_env.step()` y se resta 500 al reward.
+
+- **Scale reward proporcional a la distancia**: Anteriormente, `scale_reward = 2.0 * max(0.0, 1.0 - scale_error)` nunca era negativo — el dron no recibía castigo por estar lejos, solo dejaba de recibir premio. Se cambió a `scale_reward = 3.0 * (1.0 - scale_error)` con suelo en -3.0. Ahora la recompensa es proporcional a la distancia visual: +3.0 a distancia ideal (8% de imagen), 0.0 a distancia doble, y hasta -3.0 cuando está muy lejos o demasiado cerca. El reward total máximo en seguimiento perfecto es ahora +6.0 (centering +3.0 + scale +3.0).
+
+#### Curriculum de velocidad del target
+
+- **Problema**: El target se movía a velocidad constante (`target_speed=0.2`) desde el primer paso. Un target rápido al inicio dificulta el aprendizaje porque el dron aún no sabe seguirlo.
+- **Solución**: Curriculum lineal de velocidad: empieza lento (`--initial-target-speed 0.05`) y aumenta gradualmente hasta la velocidad máxima (`--max-target-speed 0.3`) de forma proporcional al progreso del entrenamiento. La velocidad se actualiza en cada rollout end del callback y se aplica directamente al atributo `target_speed` del entorno.
+- **Nuevos CLI args**: `--initial-target-speed`, `--max-target-speed`, `--metrics-window`.
+
+#### Bug fix de la cámara bird's-eye
+
+- **Problema**: La referencia `self.env._bird_camera = self.bird_camera` guardaba la cámara en el Monitor wrapper, pero el callback de grabación accedía via `self.env.unwrapped`, donde `_bird_camera` era `None`.
+- **Solución**: Cambio a `self.env.unwrapped._bird_camera = self.bird_camera`.
+
+#### Optimización de uso de RAM
+
+- **Problema**: Las listas `episode_rewards`, `episode_distances` y `metrics_history` crecían sin límite durante el entrenamiento, consumiendo RAM que debería estar disponible para PPO.
+- **Solución**:
+  - `episode_rewards` y `episode_distances` → `deque(maxlen=N)` con tamaño configurable via `--metrics-window` (default 50). Solo se mantienen los últimos N episodios en RAM para la media móvil de consola.
+  - `metrics_history` eliminado completamente — toda la información detallada por episodio ya se escribe a disco via CSV (`training_log.csv` con `flush()` cada episodio).
+  - `training_metrics.json` eliminado (redundante con CSV). Solo queda `training_summary.json` con resumen final.
+
+#### Sistema de datos para TFG (completado en sesión anterior)
+
+- **CSV por episodio** (`training_log.csv`): 14 columnas de métricas de filming (reward, distancia media/mín/std, centering, scale, visibilidad, violaciones proximidad, target fraction).
+- **4 gráficas matplotlib** (`scripts/generate_training_plots.py`): reward, distancia, calidad visual, seguridad. Generadas automáticamente al final del entrenamiento.
+- **Vídeos mejorados** (`episode_recorder.py`): Panel FPV con barra de estado de filming (FILMING OK / TOO FAR / TOO CLOSE / TARGET LOST) + panel bird's-eye con overlay estructurado de métricas.
+
+### Archivos Afectados
+
+#### Modificados:
+- `src/envs/panda3d_quadrotor_env.py`: Neutralización +500, scale_reward proporcional (-3.0 a +3.0)
+- `scripts/train_goal_controller.py`: Bird camera ref fix, speed curriculum, RAM optimization (deque), CLI args nuevos, eliminación metrics_history
+- `src/utils/episode_recorder.py`: Overlays mejorados de filming (sesión anterior)
+
+#### Nuevos (sesión anterior):
+- `scripts/generate_training_plots.py`: 4 figuras matplotlib para TFG
+
+### Estructura de reward final (Follow Mode)
+
+| Componente | Rango | Condición |
+|---|---|---|
+| Centering | 0 a +3.0 | Target visible, centrado en imagen |
+| Scale control | -3.0 a +3.0 | Proporcional a distancia visual (ideal 8%) |
+| Proximity penalty | -variable | Target >20% de imagen |
+| Not visible | -0.5/step | Target no detectado |
+| Base env (estabilidad) | variable | Penaliza velocidad alta, orientación extrema |
+| +500 solution | **neutralizado** | No aplica en filming mode |
+
+**Reward máximo por step**: +6.0 (seguimiento perfecto)
+**Reward en hover sin seguir**: ~-0.5 a -3.0 (penalización por no ver + scale negativo)
+
+### Comando de entrenamiento
+
+```bash
+python scripts/train_goal_controller.py --timesteps 500000 --record --record-interval 50
+```
+
+### Outputs generados
+
+```
+models/goal_controller/
+├── best_model.zip              # Modelo entrenado (pesos PPO)
+├── training_log.csv            # 14 métricas por episodio
+├── training_summary.json       # Resumen final
+├── plots/
+│   ├── plot_reward.png
+│   ├── plot_distance.png
+│   ├── plot_visual_quality.png
+│   └── plot_safety.png
+├── recordings/
+│   ├── episode_NNNNNN.mp4     # Episodios individuales (FPV + bird's-eye)
+│   └── training_timelapse.mp4 # Timelapse compilado
+└── interrupted_model.zip       # Solo si Ctrl+C
+```
+
+### Observaciones
+- **Principio de diseño**: El dron solo conoce la posición del target a través de la cámara FPV. En filming mode no se llama a `set_target()` del base env, dejando su target en [0,0,0]. Toda la navegación viene exclusivamente del reward visual.
+- **Curriculum dual**: Tanto el rango de spawn del target (1→3m) como la velocidad de movimiento (0.05→0.3) aumentan progresivamente con el entrenamiento.
+- **Eficiencia de RAM**: El sistema escribe datos directamente a disco (CSV) y solo mantiene en RAM un buffer circular configurable para el log de consola.
+
+---
+
+## [Fecha: 2026-03-18] - Rediseño de Arquitectura de Entrenamiento y Evaluación Cuantitativa (Fase 7)
+
+### Motivación
+Resolver los problemas estructurales del entrenamiento identificados en la Fase 6 (tracking de episodios roto, integración inestable SB3/Panda3D) y establecer un pipeline completo de evaluación cuantitativa del modelo entrenado para la documentación del TFG.
+
+### Descripción
+
+#### **Rediseño de la integración SB3 ↔ Panda3D**
+
+**Problema original**: En la Fase 5-6, el entrenamiento se ejecutaba dentro del task loop de Panda3D (`model.learn(chunk_steps)` llamado desde una tarea Panda3D). Esta inversión de control impedía que SB3 acumulase correctamente las métricas de episodio (`ep_info_buffer` siempre vacío, Ep=0 durante todo el entrenamiento).
+
+**Solución**: Inversión completa del flujo de control — ahora **SB3 dirige el bucle principal** y un callback personalizado (`Panda3DRenderCallback`) avanza el task manager de Panda3D en cada step:
+- `Panda3DRenderCallback._on_step()`: Ejecuta `app.taskMgr.step()` para mantener la ventana 3D responsiva y procesar eventos.
+- El entorno se envuelve con `Monitor` de SB3 para tracking correcto de episodios.
+- Se eliminó la dependencia de `direct.task.Task`.
+
+**Resultado**: SB3 reporta correctamente 1,819 episodios completados en 500k timesteps (vs 0 episodios en la fase anterior).
+
+#### **Nuevo sistema de callbacks (`GoalMetricsCallback`)**
+
+Callback unificado que reemplaza el sistema anterior de métricas fragmentado:
+
+- **Per-step tracking** (`_on_step()`): Acumula métricas de cada paso (distancia, centering, scale, visibilidad, fracciones de target) en acumuladores que se resetean al final de cada episodio.
+- **Per-episode CSV** (`_write_episode_csv()`): Escribe una fila con 14 columnas de métricas al finalizar cada episodio, con `flush()` inmediato para seguridad ante interrupciones.
+- **Curriculum de velocidad** (`_on_rollout_end()`): Actualiza `target_speed` linealmente de `initial_speed` a `max_speed` según el progreso del entrenamiento.
+- **Grabación periódica** (`_record_eval_episode()`): Ejecuta episodios de evaluación deterministas con `model.predict(deterministic=True)` y captura frames FPV + bird's-eye.
+- **Buffer circular de RAM**: `episode_rewards` y `episode_distances` como `deque(maxlen=N)` para evitar crecimiento ilimitado de memoria.
+
+#### **Optimización de la red neuronal (`StateCameraExtractor`)**
+
+Reducción de la CNN para adaptarse a la nueva resolución de entrada 32×32 (antes 64×64):
+
+| Capa | Antes | Después |
+|------|-------|---------|
+| Conv1 | 32 filtros, 5×5, stride 2 | 16 filtros, 3×3, stride 2 |
+| Conv2 | 64 filtros, 3×3, stride 2 | 32 filtros, 3×3, stride 2 |
+| Conv3 | 64 filtros, 3×3, stride 2 | *(eliminada)* |
+| Pool output | 64×4×4 = 1024 | 32×4×4 = 512 |
+| FC layers | 1024→128→64 | 512→64 |
+| **Total params** | **257,161** | **97,769** |
+
+La reducción de 2.6× en parámetros acelera el entrenamiento sin pérdida de capacidad para imágenes 32×32.
+
+#### **Mejoras en el entorno (`panda3d_quadrotor_env.py`)**
+
+1. **Resolución de cámara reducida**: 64×64 → 32×32 (4× menos píxeles, captura más rápida).
+2. **Filming mode explícito**: Nuevo parámetro `filming_mode=True` que controla la separación entre navegación geométrica y visual.
+3. **Randomización de target mejorada** (`_randomize_target()`): El target aparece a la **misma altura** que el dron, en un ángulo aleatorio 0-2π, con clamp a zona central (±3m).
+4. **Movimiento Ornstein-Uhlenbeck**: `_update_target()` en modo `moving` usa un proceso OU con reversión al centro (θ=0.15, σ=0.3) en lugar de trayectorias circulares deterministas.
+5. **Search timeout**: Trunca el episodio si el target no ha sido visto tras `search_timeout_steps` (1000 pasos = ~10s), evitando episodios donde el dron vuela sin objetivo.
+6. **`_target_ever_seen` flag**: Controla si al menos un frame contenía el target, usado por el search timeout.
+7. **Target radius aumentado**: 0.20 → 0.25 (tamaño similar al dron, más visible a distancia).
+
+#### **Detección visual del target (`_compute_visual_tracking_reward`)**
+
+Nueva función de reward puramente visual basada en detección por color HSV:
+
+- **Detección**: Conversión RGB→BGR→HSV, `cv2.inRange(hsv, (5,100,100), (25,255,255))` para naranja.
+- **Umbral de visibilidad**: ≥3 píxeles naranjas = target visible.
+- **Centering reward**: +3.0 × (1 - distancia_normalizada_al_centro). Perfecto al centro, 0 en el borde.
+- **Scale reward**: +3.0 × (1 - |fracción - 0.08| / 0.08). Proporcional, con suelo en -3.0.
+- **Proximity penalty**: Penalización extra si target > 20% de la imagen.
+- **Not visible penalty**: -0.5/step si el target no se detecta.
+
+#### **Overlays de vídeo mejorados (`episode_recorder.py`)**
+
+- **Panel FPV**: Crosshair verde central + punto rojo en centroide del target + barra de estado inferior con estados: `FILMING OK` (verde), `TOO FAR` (amarillo), `TOO CLOSE` (rojo), `TARGET LOST` (gris).
+- **Panel Bird's-eye**: Overlay estructurado con secciones "Training" (chunk, step, timestep) y "Filming Quality" (reward, distance, centering, scale, visibility).
+
+#### **Scripts de evaluación y análisis**
+
+**`scripts/evaluate_goal_controller.py`** (~270 líneas):
+- Evaluación cuantitativa del modelo entrenado sobre N episodios.
+- Métricas: Success Rate, Collision Rate, Mean Distance, Search Time, Tracking Quality.
+- Salidas: `evaluation_results.json`, `evaluation_summary.json`, `evaluation_table.tex`.
+
+**`scripts/record_10_tests.py`** (~240 líneas):
+- Genera 10 episodios de test grabados con vídeo FPV + bird's-eye.
+- Registra telemetría completa por step (posición, distancia, visibilidad, centering, scale).
+- Salidas: `telemetry.csv` (10,000 filas), `summary.json`, 10 vídeos MP4.
+
+**`scripts/analyze_drone_movement.py`** (~350 líneas):
+- Análisis de trayectorias 3D, evolución temporal de estado, heatmap de acciones motoras, timeline de visibilidad, y calidad de centrado.
+- Gráficas publication-quality para la memoria del TFG.
+
+**`scripts/generate_training_plots.py`** (~250 líneas):
+- Genera 4 gráficas a partir de `training_log.csv`: reward, distancia, calidad visual, seguridad.
+- Salidas: `plot_reward.png`, `plot_distance.png`, `plot_visual_quality.png`, `plot_safety.png`.
+
+**`scripts/collect_training_data.py`** (~100 líneas):
+- Generación de reportes a partir de archivos JSON de métricas de entrenamiento.
+
+**`tests/test_camera_views.py`** (~100 líneas):
+- Captura de imágenes de referencia desde las distintas cámaras del proyecto.
+
+### Archivos Afectados
+
+#### Modificados:
+- `scripts/train_goal_controller.py` (+730/-330 líneas): Rediseño completo con callbacks SB3, eliminación del task loop de Panda3D.
+- `src/envs/panda3d_quadrotor_env.py` (+206 líneas): Filming mode, visual tracking reward, OU process, search timeout, randomización mejorada.
+- `src/agents/feature_extractors.py` (+16/-16 líneas): CNN optimizada para 32×32.
+- `src/utils/episode_recorder.py` (+135 líneas): Overlays de filming con barra de estado y métricas estructuradas.
+- `scripts/collect_depth_realdata.py` (corrección menor).
+
+#### Nuevos:
+- `scripts/evaluate_goal_controller.py` (~270 líneas)
+- `scripts/record_10_tests.py` (~240 líneas)
+- `scripts/analyze_drone_movement.py` (~350 líneas)
+- `scripts/generate_training_plots.py` (~250 líneas)
+- `scripts/collect_training_data.py` (~100 líneas)
+- `tests/test_camera_views.py` (~100 líneas)
+
+#### Datos generados:
+- `models/goal_controller/best_model.zip`: Modelo entrenado (97,769 params)
+- `models/goal_controller/training_log.csv`: 1,819 episodios con 14 métricas
+- `models/goal_controller/training_summary.json`: Resumen del entrenamiento
+- `models/goal_controller/plots/`: 4 gráficas de evolución del entrenamiento
+- `models/goal_controller/recordings/`: Vídeos de episodios de evaluación durante entrenamiento
+- `experiments/recorded_tests/summary.json`: Resultados de 10 tests
+- `experiments/recorded_tests/telemetry.csv`: 10,001 filas de telemetría
+- `experiments/recorded_tests/videos/`: 10 vídeos MP4 de episodios de test
+
+### Resultados del Entrenamiento (500k steps, Follow Mode)
+
+| Métrica | Valor |
+|---------|-------|
+| Episodios completados | 1,819 |
+| Reward medio final | +1,860.8 |
+| Distancia media al target | 1.85m |
+| Velocidad final del target | 0.3 m/s |
+| Parámetros de la política | 97,769 |
+| Tiempo de entrenamiento | 89,871s (~24.9h) |
+| Modo | Filming (moving target, OU process) |
+
+### Resultados de Evaluación (10 episodios de test)
+
+| Métrica | Valor |
+|---------|-------|
+| Distancia media al target | **1.28m** |
+| Centering medio | **2.54/3.0** (84.7%) |
+| Episodios de 1000 steps | 10/10 (100% estabilidad) |
+| Mejor distancia final | 0.31m (episodio 5) |
+| Peor distancia final | 2.41m (episodio 2) |
+
+### Análisis
+
+1. **Integración SB3/Panda3D resuelta**: El nuevo diseño con callbacks invierte correctamente el flujo de control. SB3 reporta episodios, rewards y métricas sin problemas.
+
+2. **Mejora significativa vs Fase 5**: La distancia media bajó de 2.11m (Fase 5, target fijo) a 1.28m (Fase 7, target en movimiento), a pesar de la mayor dificultad de la tarea.
+
+3. **Centering de alta calidad**: El dron mantiene el target centrado al 84.7% de la puntuación máxima, lo que indica que la CNN aprende a extraer información direccional de la imagen FPV.
+
+4. **Estabilidad completa**: Los 10 episodios de test alcanzaron los 1000 steps sin crashes ni truncaciones, demostrando que el agente combina correctamente el vuelo estable con el seguimiento visual.
+
+5. **Trade-off velocidad vs calidad**: El entrenamiento con Panda3D activo es ~35× más lento que el baseline headless (24.9h vs 43min para 500k steps), pero es necesario para capturar imágenes reales.
+
+### Conclusiones para el TFG
+
+1. **El Follow Mode funciona**: El dron aprende a seguir un objetivo móvil usando exclusivamente la cámara FPV, sin acceso a la posición del target.
+2. **La detección por color HSV es suficiente**: Para un target naranja en una escena urbana gris, la detección por umbral HSV es robusta y computacionalmente barata.
+3. **La CNN ligera de 97k parámetros extrae información espacial útil**: El centering score de 2.54/3.0 demuestra que la red aprende a mapear píxeles a comandos de navegación.
+4. **Pipeline de evaluación completo**: Los scripts de test generan automáticamente vídeos, telemetría CSV, métricas agregadas y tablas LaTeX para la memoria.
+
+### Siguientes Pasos
+1. Entrenar con más timesteps (1M-2M) para mejorar la convergencia de distancia.
+2. Experimentar con curriculum de rango del target (1→5m).
+3. Añadir obstáculos entre el dron y el target para evaluar evasión.
+4. Comparar rendimiento con resoluciones de cámara mayores (64×64, 128×128).
+5. Documentar resultados finales en la memoria del TFG con las gráficas y tablas generadas.
+

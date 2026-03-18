@@ -148,26 +148,22 @@ class StateCameraExtractor(BaseFeaturesExtractor):
         cam_shape = observation_space[camera_key].shape
         cam_c, cam_h, cam_w = cam_shape  # Channel-first after SB3 preprocessing
         
-        # CNN for camera image processing
+        # CNN for camera image processing (optimized for 32×32 input)
         # Input arrives as (B, C, H, W) from SB3 preprocessing
         self.camera_cnn = nn.Sequential(
-            nn.Conv2d(cam_c, 32, kernel_size=5, stride=2, padding=2),
+            nn.Conv2d(cam_c, 16, kernel_size=3, stride=2, padding=1),   # 32→16
             nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1),      # 16→8
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((4, 4)),  # Fixed output: 64 * 4 * 4 = 1024
+            nn.AdaptiveAvgPool2d((4, 4)),  # 8→4: 32 * 4 * 4 = 512
             nn.Flatten()
         )
         
-        cnn_output_dim = 64 * 4 * 4  # = 1024
+        cnn_output_dim = 32 * 4 * 4  # = 512
         
         # Camera feature reducer
         self.camera_fc = nn.Sequential(
-            nn.Linear(cnn_output_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
+            nn.Linear(cnn_output_dim, 64),
             nn.ReLU()
         )
         

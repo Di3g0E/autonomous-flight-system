@@ -45,8 +45,8 @@ class Panda3DQuadrotorEnv(gym.Env):
         use_camera=False,
         camera_high_freq_obj=None,
         camera_low_freq_obj=None,
-        camera_high_freq_size=(64, 64),
-        camera_low_freq_size=(320, 320),
+        camera_high_freq_size=(32, 32),
+        camera_low_freq_size=(32, 32),
         physics_steps_per_high_freq_capture=1,
         physics_steps_per_low_freq_capture=10,
         # Depth parameters
@@ -56,8 +56,11 @@ class Panda3DQuadrotorEnv(gym.Env):
         use_target=False,
         target_mode='fixed',
         target_range=3.0,
-        target_radius=0.2,
-        target_speed=0.2
+        target_radius=0.25,
+        target_speed=0.2,
+        search_timeout_steps=1000,
+        # Filming mode: drone navigates purely by vision (no geometric attraction)
+        filming_mode=True
     ):
         """
         Initialize the Panda3D Quadrotor Environment.
@@ -83,11 +86,14 @@ class Panda3DQuadrotorEnv(gym.Env):
             physics_steps_per_high_freq_capture: Physics steps between high-freq captures
             physics_steps_per_low_freq_capture: Physics steps between low-freq captures
             use_depth: Enable depth buffer extraction (requires use_camera=True)
-        use_target: Enable visual target tracking mode
-        target_mode: 'fixed' (random static), 'waypoints' (sequential), 'moving' (circular)
-        target_range: Maximum distance for random target placement
-        target_radius: Visual radius of the target sphere
-        target_speed: Speed of moving target (m/s, only for 'moving' mode)
+            use_target: Enable visual target tracking mode
+            target_mode: 'fixed' (random static), 'waypoints' (sequential), 'moving' (circular)
+            target_range: Maximum distance for random target placement
+            target_radius: Visual radius of the target sphere (0.25 ≈ drone size)
+            target_speed: Speed of moving target (m/s, only for 'moving' mode)
+            search_timeout_steps: Max steps without seeing target before truncation (1000=10s)
+            filming_mode: If True, disable geometric attraction (base env target stays at origin).
+                          All navigation comes from visual rewards only.
             depth_metric: Use metric depth (meters) instead of normalized [0,1]
         """
         super(Panda3DQuadrotorEnv, self).__init__()
@@ -198,6 +204,9 @@ class Panda3DQuadrotorEnv(gym.Env):
         self.collision_occurred = False
         self.collision_info = {}
         
+        # Filming mode
+        self.filming_mode = filming_mode
+
         # Target/goal tracking
         self.use_target = use_target
         self.target_mode = target_mode
@@ -210,6 +219,9 @@ class Panda3DQuadrotorEnv(gym.Env):
         self._waypoint_idx = 0
         self._waypoints = []
         self._arrival_threshold = 0.3  # meters
+        self.search_timeout_steps = search_timeout_steps
+        self._target_ever_seen = False  # has the target been seen at least once?
+        self._bird_camera = None  # set externally for recording
         
         # Create target marker if in target mode and Panda3D is available
         if self.use_target and self.panda3d_app is not None:
@@ -255,21 +267,46 @@ class Panda3DQuadrotorEnv(gym.Env):
             self._target_node = None
     
     def _randomize_target(self):
-        """Generate a random target position within the configured range."""
-        self.target_pos = (np.random.rand(3) - 0.5) * 2 * self.target_range
+        """Generate a random target at the SAME HEIGHT as the drone, at a random angle.
         
-        # For waypoints mode, generate a sequence
+        The target can be behind, beside, or in front of the drone (0-2π).
+        It is clamped to the central zone (±3m) to stay in clean space.
+        """
+        drone_pos = self.base_env.state[0:5:2]  # [x, y, z]
+        
+        # Random angle in full circle and random distance
+        angle = np.random.uniform(0, 2 * np.pi)
+        distance = np.random.uniform(1.0, self.target_range)
+        
+        self.target_pos = np.array([
+            drone_pos[0] + distance * np.cos(angle),
+            drone_pos[1] + distance * np.sin(angle),
+            drone_pos[2],  # SAME HEIGHT as drone
+        ])
+        
+        # Clamp to central zone (stay away from city edges)
+        self.target_pos = np.clip(self.target_pos, -3.0, 3.0)
+        
+        # For waypoints mode, generate a sequence at same height
         if self.target_mode == 'waypoints':
             n_waypoints = 5
-            self._waypoints = [
-                (np.random.rand(3) - 0.5) * 2 * self.target_range
-                for _ in range(n_waypoints)
-            ]
+            self._waypoints = []
+            for _ in range(n_waypoints):
+                a = np.random.uniform(0, 2 * np.pi)
+                d = np.random.uniform(1.0, self.target_range)
+                wp = np.array([
+                    d * np.cos(a),
+                    d * np.sin(a),
+                    drone_pos[2],
+                ])
+                self._waypoints.append(np.clip(wp, -3.0, 3.0))
             self._waypoint_idx = 0
             self.target_pos = self._waypoints[0]
         
-        # Update base env target for reward calculation
-        self.base_env.set_target(self.target_pos)
+        # In filming mode, base env target stays at origin (navigation is purely visual).
+        # In reach mode, base env shaping attracts toward target geometrically.
+        if not self.filming_mode:
+            self.base_env.set_target(self.target_pos)
         
         # Update visual marker position
         self._update_target_marker_pos()
@@ -305,27 +342,36 @@ class Panda3DQuadrotorEnv(gym.Env):
             if dist_to_target < self._arrival_threshold and len(self._waypoints) > 0:
                 self._waypoint_idx = (self._waypoint_idx + 1) % len(self._waypoints)
                 self.target_pos = self._waypoints[self._waypoint_idx]
-                self.base_env.set_target(self.target_pos)
+                if not self.filming_mode:
+                    self.base_env.set_target(self.target_pos)
                 self._update_target_marker_pos()
         
         elif self.target_mode == 'moving':
-            # Circular trajectory
+            # Random movement using Ornstein-Uhlenbeck process
             self._target_time += dt
-            r = self.target_range * 0.5  # Circular radius = half the range
-            self.target_pos = np.array([
-                r * np.cos(self._target_time * self.target_speed),
-                r * np.sin(self._target_time * self.target_speed),
-                0.0  # Keep target at z=0 (hover height)
-            ])
-            self.base_env.set_target(self.target_pos)
+            
+            # Reversion to center and random noise
+            theta = 0.15    # strength of reversion
+            sigma = 0.3     # intensity of noise
+            
+            # Simple 2D OU process for x, y
+            vel = theta * (np.zeros(2) - self.target_pos[:2]) * dt + \
+                  sigma * np.random.randn(2) * np.sqrt(dt)
+            
+            self.target_pos[:2] += vel * self.target_speed * 10
+            self.target_pos[2] = drone_pos[2]  # Keep at drone height
+            
+            self.target_pos = np.clip(self.target_pos, -3.0, 3.0)
+            if not self.filming_mode:
+                self.base_env.set_target(self.target_pos)
             self._update_target_marker_pos()
     
     def _goal_reward(self):
         """
-        Compute goal-reaching reward (uses privileged sim info).
+        Compute goal-reaching reward.
         
         Returns:
-            dict with target info to add to step info
+            dict with target info; adds +500 arrival bonus.
         """
         drone_pos = self.base_env.state[0:5:2]
         dist = np.linalg.norm(drone_pos - self.target_pos)
@@ -334,8 +380,81 @@ class Panda3DQuadrotorEnv(gym.Env):
         return {
             'target_pos': self.target_pos.copy(),
             'distance_to_target': float(dist),
-            'arrived': arrived
+            'arrived': arrived,
         }
+    
+    def _compute_visual_tracking_reward(self):
+        """
+        Compute dense per-step reward based on visual target tracking.
+        
+        Detects the orange sphere in the 32×32 camera image by color,
+        then rewards:
+          - Centering: how close the sphere centroid is to image center
+          - Scale control: keeping the sphere at a consistent pixel size
+          - Penalty for not seeing the target (encourages yaw search)
+        
+        Returns:
+            reward (float), info (dict)
+        """
+        reward = 0.0
+        info = {}
+        
+        img = self._last_high_freq_image  # (H, W, 3) uint8 RGB
+        if img is None:
+            return reward, info
+        
+        h, w = img.shape[:2]
+        
+        # Detect orange pixels via HSV thresholding
+        img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+        # Orange hue range in HSV (OpenCV H: 0-180)
+        mask = cv2.inRange(hsv, (5, 100, 100), (25, 255, 255))
+        
+        pixel_count = int(np.sum(mask > 0))
+        total_pixels = h * w
+        target_visible = pixel_count > 2  # at least 3 orange pixels
+        
+        info['target_visible'] = target_visible
+        info['target_pixels'] = pixel_count
+        
+        if target_visible:
+            self._target_ever_seen = True
+            
+            # Compute centroid of detected pixels
+            ys, xs = np.where(mask > 0)
+            cx, cy = float(np.mean(xs)), float(np.mean(ys))
+            center_x, center_y = w / 2.0, h / 2.0
+            
+            # Normalized distance from centroid to image center (0=perfect, 1=corner)
+            max_dist = np.sqrt(center_x**2 + center_y**2)
+            dist_to_center = np.sqrt((cx - center_x)**2 + (cy - center_y)**2) / max_dist
+            
+            # CENTERING BONUS: +3.0 when perfectly centered, → 0 at edge
+            centering_reward = 3.0 * (1.0 - dist_to_center)
+            reward += centering_reward
+            
+            # SCALE CONTROL: +3.0 at ideal 8%, proportionally negative when far/close
+            target_fraction = pixel_count / total_pixels
+            ideal_fraction = 0.08  # ~8% of image
+            scale_error = abs(target_fraction - ideal_fraction) / max(ideal_fraction, 1e-6)
+            scale_reward = 3.0 * (1.0 - scale_error)  # Proportional: positive at ideal, negative far away
+            scale_reward = max(scale_reward, -3.0)     # Floor to prevent extreme penalties
+            reward += scale_reward
+            
+            # PROXIMITY PENALTY: penalize getting TOO close (> 20% of image)
+            if target_fraction > 0.20:
+                reward -= 3.0 * (target_fraction - 0.20) / 0.20
+            
+            info['centering_reward'] = float(centering_reward)
+            info['scale_reward'] = float(scale_reward)
+            info['target_center'] = (cx, cy)
+            info['target_fraction'] = float(target_fraction)
+        else:
+            # Penalty for not seeing the target (encourages rotation to search)
+            reward -= 0.5
+        
+        return reward, info
     
     def _setup_collision_system(self):
         """Setup the collision detection system."""
@@ -561,6 +680,7 @@ class Panda3DQuadrotorEnv(gym.Env):
         
         # Randomize target if in goal mode
         if self.use_target:
+            self._target_ever_seen = False
             self._randomize_target()
             self._target_time = 0.0
             info['target'] = self._goal_reward()
@@ -586,7 +706,13 @@ class Panda3DQuadrotorEnv(gym.Env):
         """
         # Execute step in base environment (physics simulation)
         observation, reward, terminated, truncated, info = self.base_env.step(action)
-        
+
+        # Neutralize +500 "solution achieved" bonus in filming mode
+        # (base env rewards hovering at origin, irrelevant for visual tracking)
+        if self.filming_mode and self.base_env.solved:
+            reward -= 500
+            self.base_env.solved = 0
+
         # Increment step counter for camera frame skip
         self._step_counter += 1
         
@@ -626,7 +752,23 @@ class Panda3DQuadrotorEnv(gym.Env):
         # Update target tracking
         if self.use_target:
             self._update_target(dt=self.base_env.t_step)
-            info['target'] = self._goal_reward()
+            goal_info = self._goal_reward()
+            info['target'] = goal_info
+            
+            # Reward is now purely based on tracking quality
+            # No arrival bonus to avoid collision behavior
+        
+        # Visual tracking reward (dense, per-step)
+        if self.use_target and self.use_camera:
+            visual_reward, visual_info = self._compute_visual_tracking_reward()
+            reward += visual_reward
+            info['visual_tracking'] = visual_info
+        
+        # Search timeout: truncate if target was never seen after 7s
+        if (self.use_target and 
+                self._step_counter >= self.search_timeout_steps and
+                not self._target_ever_seen):
+            truncated = True
         
         # Build observation (with or without camera)
         observation = self._build_observation(observation)
