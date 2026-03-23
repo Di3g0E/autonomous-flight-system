@@ -1,0 +1,6 @@
+{
+  "total_episodes": 35392,
+  "final_mean_reward": -265.9,
+  "final_speed": 0.192336,
+  "csv_path": "models\\lemniscate_follower\\training_log.csv"
+}

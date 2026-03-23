@@ -1090,3 +1090,48 @@ Nueva función de reward puramente visual basada en detección por color HSV:
 4. Comparar rendimiento con resoluciones de cámara mayores (64×64, 128×128).
 5. Documentar resultados finales en la memoria del TFG con las gráficas y tablas generadas.
 
+---
+
+## [Fecha: 2026-03-21] - Refactor del Sistema de Seguimiento Visual
+
+### Motivación
+El análisis de los tests de seguimiento en lemniscata reveló que el dron no seguía la esfera. La causa raíz era que con `filming_mode=True`, la recompensa del entorno base atraía al dron hacia el origen (0,0,0) en lugar de hacia el target. El dron aprendía a estabilizarse y rotar la cámara, pero no a trasladarse. Además, el color verde del target generaba posibles confusiones con elementos de la escena.
+
+### Descripción
+
+- **Color del target**: Cambiado de **verde** (H≈60 HSV) a **magenta** (H≈150 HSV). El magenta no existe en ninguna textura de la escena urbana (ladrillo, madera, asfalto, cielo), eliminando falsos positivos.
+  - Material de emisión: `LColor(1.0, 0.0, 1.0, 1.0)` (antes `0.0, 1.0, 0.0`)
+  - Rango de detección HSV: `(140, 100, 100)` – `(170, 255, 255)` (antes `(35, 100, 100)` – `(85, 255, 255)`)
+
+- **Recompensa visual reformulada**: Se reemplaza el sistema anterior de centering + scale por una recompensa basada en la **fracción de imagen** que ocupa el target:
+  - **Banda positiva** (error ≤ `fraction_tolerance`): recompensa gaussiana con máximo `max_visual_reward` en `ideal_fraction`.
+  - **Banda negativa** (error > `fraction_tolerance`): penalización exponencial creciente, con suelo en `-max_visual_reward`.
+  - **Target no visible**: penalización fija de `-5.0`.
+  - Parámetros nuevos del constructor: `ideal_fraction` (0.25), `fraction_tolerance` (0.05), `max_visual_reward` (1000.0).
+
+- **Aislamiento de reward en filming mode**: En `step()`, cuando `filming_mode=True`, toda la recompensa del base env se descarta (`reward = 0.0`), conservando solo `-200.0` si el dron sale del bounding box. Antes, se restaban solo +500 del bonus de "solución alcanzada".
+
+- **Distancia mínima de inicio** (`min_start_distance=3.0`): Al resetear en `target_mode='moving'`, se muestrea la fase de la lemniscata hasta encontrar una posición inicial del target que esté al menos a `min_start_distance` metros del dron.
+
+- **Altura fija del target**: La posición Z del target se fija en `0.0` (antes usaba `drone_pos[2]`), haciendo la trayectoria en lemniscata independiente de la altura del dron.
+
+### Archivos Afectados
+- `src/envs/panda3d_quadrotor_env.py` (Modificado)
+  - Constructor: añadidos parámetros `ideal_fraction`, `fraction_tolerance`, `max_visual_reward`, `min_start_distance`
+  - `_create_target_marker()`: color cambiado a magenta
+  - `_randomize_target()`: bucle de muestreo con `min_start_distance`, altura fija z=0
+  - `_update_target()`: eliminada actualización dinámica de z
+  - `_compute_visual_tracking_reward()`: reescrita con sistema de fracción
+  - `step()`: aislamiento completo de reward del base env en filming mode
+
+### Resultados/Observaciones
+- **Entrenamiento en curso**: Se ha relanzado el entrenamiento con 1M+ timesteps usando los nuevos parámetros.
+- **Análisis previo**: Con la configuración anterior, el dron se desplazaba ~1.2m en 2000 pasos mientras el target recorría ±5m. La distancia media era ~3.1m.
+- **Expectativa**: El nuevo sistema debería guiar al dron a acercarse al target hasta que la fracción de imagen sea ~25%, lo que corresponde a una distancia de seguimiento proporcional al radio del target.
+
+### Siguientes Pasos
+1. Completar entrenamiento 1M+ timesteps y evaluar resultados.
+2. Ajustar `ideal_fraction`, `fraction_tolerance` y `max_visual_reward` según resultados experimentales.
+3. Repetir los tests de lemniscata follow con el nuevo modelo.
+4. Comparar métricas con los resultados de la Fase 7.
+

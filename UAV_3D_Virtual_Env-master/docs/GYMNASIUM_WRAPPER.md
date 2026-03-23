@@ -104,21 +104,37 @@ Limpia recursos del entorno.
 
 ## Función de Recompensa
 
-La función de recompensa está diseñada para estabilización y hover:
+La función de recompensa varía según el modo de operación:
 
-- **Recompensa de shaping**: Basada en la distancia a la posición objetivo (origen)
+### Modo base (hover / goal-reaching)
+- **Recompensa de shaping**: Basada en la distancia a la posición objetivo (origen por defecto)
 - **Penalización de control**: Penaliza acciones extremas
 - **Recompensa de éxito**: +500 cuando se alcanza el objetivo
 - **Penalización de fallo**: -200 cuando se violan los límites
+
+### Modo filming (`filming_mode=True`)
+En filming mode, la recompensa del entorno base se **descarta completamente** (se sustituye por `0.0`), conservando únicamente la penalización de `-200` si el dron sale de los bounding boxes. Toda la señal de recompensa proviene de la **recompensa visual basada en fracción**:
+
+- **Zona ideal** (`|fraction - ideal_fraction| ≤ fraction_tolerance`): recompensa positiva gaussiana con máximo `max_visual_reward` cuando la fracción coincide exactamente con el ideal.
+- **Zona exterior** (error > tolerance): penalización exponencial creciente, limitada a `-max_visual_reward`.
+- **Objetivo no visible**: penalización fija de `-5.0` para incentivar la búsqueda.
+
+#### Parámetros configurables de la recompensa visual
+| Parámetro | Default | Descripción |
+|---|---|---|
+| `ideal_fraction` | 0.25 | Fracción ideal de píxeles del objetivo sobre el total |
+| `fraction_tolerance` | 0.05 | Tolerancia alrededor del ideal para recompensa positiva |
+| `max_visual_reward` | 1000.0 | Recompensa máxima en el punto ideal |
 
 ## Condiciones de Terminación
 
 ### Terminated (Episodio terminado)
 - Violación de bounding boxes de posición, velocidad o ángulos
-- Alcance del objetivo (estado estable cerca del origen)
+- Alcance del objetivo (estado estable cerca del origen) — solo en modo base
 
 ### Truncated (Episodio truncado)
 - Se alcanza el número máximo de pasos (`n`)
+- Search timeout: si el objetivo no ha sido visto tras `search_timeout_steps` pasos
 
 ## Bounding Boxes
 
@@ -225,13 +241,11 @@ python example_gym_usage.py
 
 ## Próximos Pasos
 
-1. **Implementar visualización**: Añadir renderizado en el método `render()`
-2. **Wrappers adicionales**: 
+1. **Wrappers adicionales**: 
    - Normalización de observaciones
    - Frame stacking
-   - Reward shaping personalizado
-3. **Benchmarks**: Evaluar con diferentes algoritmos de RL
-4. **Documentación**: Añadir más ejemplos y tutoriales
+2. **Benchmarks**: Evaluar resultados del entrenamiento con el nuevo reward visual
+3. **Ajuste de hiperparámetros**: Experimentar con `ideal_fraction`, `fraction_tolerance` y `max_visual_reward`
 
 ## Referencias
 

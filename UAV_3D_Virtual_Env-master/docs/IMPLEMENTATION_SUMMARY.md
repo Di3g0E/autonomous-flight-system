@@ -1,8 +1,9 @@
-# Resumen de Implementación - Sistema de Detección de Colisiones
+# Resumen de Implementación
 
-## ✅ Implementación Completada
+## ✅ Implementaciones Completadas
 
-Se ha implementado exitosamente un **sistema modular de detección de colisiones** siguiendo la **Opción A (Recomendada)** con arquitectura profesional y escalable.
+- **Sistema modular de detección de colisiones** con arquitectura profesional y escalable.
+- **Sistema de seguimiento visual** con target magenta, recompensa basada en fracción de imagen y modo filming con aislamiento completo de reward.
 
 ## 🏗️ Arquitectura Implementada
 
@@ -96,6 +97,16 @@ Se ha implementado exitosamente un **sistema modular de detección de colisiones
 - [x] Penalización configurable en reward
 - [x] Visualización de debug opcional
 - [x] API Gymnasium mantenida
+
+### ✅ Fase 4: Sistema de Seguimiento Visual
+- [x] Target marker color **magenta** (`H≈150` HSV) — sin falsos positivos en la escena urbana
+- [x] Detección HSV con rango `(140, 100, 100)` – `(170, 255, 255)`
+- [x] Recompensa basada en **fracción de imagen ocupada** (sustituye centering + scale)
+- [x] Banda positiva: gaussiana con máximo `max_visual_reward` en `ideal_fraction` (±`fraction_tolerance`)
+- [x] Banda negativa: penalización exponencial fuera de la banda de tolerancia
+- [x] Filming mode: recompensa del base env **descartada** (0.0), solo se conserva -200 por boundary violation
+- [x] Distancia mínima de inicio (`min_start_distance`) para colocar el target al resetear
+- [x] Altura fija del target a z=0.0 (independiente de la altura del dron)
 
 ## 🚀 Modos de Uso
 
@@ -217,18 +228,19 @@ Example 5: Info Dict Structure - PASSED
 
 ### Corto Plazo
 1. ✅ ~~Implementar detección de colisiones~~ **COMPLETADO**
-2. Entrenar agente con colisiones
-3. Evaluar rendimiento con obstáculos
+2. ✅ ~~Implementar sistema de seguimiento visual con reward basado en fracción~~ **COMPLETADO**
+3. Completar entrenamiento (1M+ timesteps) y evaluar resultados
+4. Ajustar `ideal_fraction`, `fraction_tolerance` y `max_visual_reward` mediante experimentación
 
 ### Medio Plazo
-4. Añadir sensores de proximidad (raycast)
-5. Reward shaping basado en distancia
-6. Normalización de observaciones
+5. Entrenar agente con colisiones + seguimiento visual
+6. Añadir sensores de proximidad (raycast)
+7. Normalización de observaciones
 
 ### Largo Plazo
-7. Obstáculos dinámicos
-8. Múltiples quadrotors
-9. Entornos procedurales
+8. Obstáculos dinámicos
+9. Múltiples quadrotors
+10. Entornos procedurales
 
 ## 📚 Documentación
 

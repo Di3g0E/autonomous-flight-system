@@ -211,7 +211,7 @@ gamma = 0.99
 
 ## Métricas de Éxito
 
-### Hover Control (Tarea Principal)
+### Hover Control (Tarea Básica)
 
 **Objetivo**: Mantener el dron cerca del origen (0, 0, 0)
 
@@ -219,6 +219,16 @@ gamma = 0.99
 - **Reward promedio**: > -50 (bueno), > -20 (excelente)
 - **Success rate**: > 50% (bueno), > 80% (excelente)
 - **Distancia final**: < 0.5m (bueno), < 0.2m (excelente)
+
+### Seguimiento Visual (Tarea de Filming)
+
+**Objetivo**: Mantener la esfera magenta en la fracción ideal de la imagen de la cámara FPV
+
+**Métricas**:
+- **Distancia media al target**: < 2m (bueno), < 1m (excelente)
+- **Fracción de imagen del target**: ~25% ideal (configurable con `ideal_fraction`)
+- **Visibilidad del target**: > 80% de los steps (bueno)
+- **Recompensa visual**: Positiva de forma consistente
 
 **Baseline (política aleatoria)**:
 - Reward promedio: ~ -400 a -600
@@ -288,9 +298,9 @@ python train_sb3.py ...
    - Añadir obstáculos progresivamente
 
 3. **Reward shaping**:
-   - Recompensa por mantener distancia de obstáculos
-   - Penalización por movimientos bruscos
-   - Bonus por eficiencia energética
+   - Recompensa visual basada en fracción de imagen (ya implementada)
+   - Parámetros configurables: `ideal_fraction`, `fraction_tolerance`, `max_visual_reward`
+   - Modo filming: base env reward descartado, solo recompensa visual
 
 4. **Transfer learning**:
    - Entrenar en simulación

@@ -60,7 +60,14 @@ class Panda3DQuadrotorEnv(gym.Env):
         target_speed=0.2,
         search_timeout_steps=1000,
         # Filming mode: drone navigates purely by vision (no geometric attraction)
-        filming_mode=True
+        filming_mode=True,
+        # Lemniscate trajectory scale (half-width of the ∞; full width = 2×scale)
+        lemniscate_scale=2.5,
+        # Visual reward parameters (fraction-based)
+        ideal_fraction=0.25,
+        fraction_tolerance=0.05,
+        max_visual_reward=1000.0,
+        min_start_distance=3.0,
     ):
         """
         Initialize the Panda3D Quadrotor Environment.
@@ -222,6 +229,16 @@ class Panda3DQuadrotorEnv(gym.Env):
         self.search_timeout_steps = search_timeout_steps
         self._target_ever_seen = False  # has the target been seen at least once?
         self._bird_camera = None  # set externally for recording
+
+        # Lemniscate (∞) trajectory parameters
+        self.lemniscate_scale = lemniscate_scale  # half-width 'a' (full width = 2a)
+        self._lemniscate_phase = 0.0              # starting phase on the curve
+
+        # Visual reward parameters (fraction-based)
+        self.ideal_fraction = ideal_fraction
+        self.fraction_tolerance = fraction_tolerance
+        self.max_visual_reward = max_visual_reward
+        self.min_start_distance = min_start_distance
         
         # Create target marker if in target mode and Panda3D is available
         if self.use_target and self.panda3d_app is not None:
@@ -229,10 +246,7 @@ class Panda3DQuadrotorEnv(gym.Env):
     
     def _create_target_marker(self):
         """Create a visible sphere in the Panda3D scene as the target marker."""
-        from panda3d.core import (
-            GeomNode, CardMaker, Material, LColor,
-            PointLight, NodePath
-        )
+        from panda3d.core import Material, LColor
         
         # Create a sphere using Panda3D's built-in geometry
         # We use a simple colored point light with a visible model
@@ -247,67 +261,102 @@ class Panda3DQuadrotorEnv(gym.Env):
             self._target_node = sphere
             self._target_node.reparentTo(self.render_node)
             self._target_node.setScale(self.target_radius * 2)
-            
-            # Bright red/orange material so it's clearly visible
+
+            # Magenta self-illuminating material (H≈150 in HSV).
+            # Magenta does not exist in any scene texture (brick, wood,
+            # concrete, asphalt, dirt, sky are all warm browns/greys/blue),
+            # guaranteeing zero false positives in the HSV detector.
+            # setLightOff() keeps the colour pure regardless of lighting.
             mat = Material()
-            mat.setEmission(LColor(1.0, 0.3, 0.0, 1.0))  # Bright orange glow
-            mat.setDiffuse(LColor(1.0, 0.2, 0.0, 1.0))
-            mat.setAmbient(LColor(1.0, 0.4, 0.0, 1.0))
+            mat.setEmission(LColor(1.0, 0.0, 1.0, 1.0))
+            mat.setDiffuse(LColor(0.0, 0.0, 0.0, 1.0))
+            mat.setAmbient(LColor(0.0, 0.0, 0.0, 1.0))
             self._target_node.setMaterial(mat)
-            self._target_node.setColor(1.0, 0.3, 0.0, 1.0)
-            
-            # Add a point light at the target for extra visibility
-            plight = PointLight('target_light')
-            plight.setColor(LColor(1.0, 0.5, 0.0, 1.0))
-            plight.setAttenuation((1, 0.05, 0.01))
-            plight_node = self._target_node.attachNewNode(plight)
-            self.render_node.setLight(plight_node)
+            self._target_node.setColor(1.0, 0.0, 1.0, 1.0)
+            self._target_node.setLightOff()
         else:
             # Headless fallback: no visual marker
             self._target_node = None
     
+    def _lemniscate_point(self, t):
+        """Compute a point on the Bernoulli lemniscate (∞) in the horizontal plane.
+
+        Parametric form:
+            x(t) = a * cos(t) / (1 + sin²(t))
+            y(t) = a * sin(t) * cos(t) / (1 + sin²(t))
+
+        The ∞ lies flat along the X axis (width = 2a, depth ≈ 2a/3).
+        Natural symmetry forces equal left/right turns, preventing
+        directional bias during training.
+
+        Args:
+            t: Parameter along the curve (radians).
+
+        Returns:
+            (x, y) position on the lemniscate.
+        """
+        a = self.lemniscate_scale
+        denom = 1.0 + np.sin(t) ** 2
+        x = a * np.cos(t) / denom
+        y = a * np.sin(t) * np.cos(t) / denom
+        return x, y
+
     def _randomize_target(self):
-        """Generate a random target at the SAME HEIGHT as the drone, at a random angle.
-        
-        The target can be behind, beside, or in front of the drone (0-2π).
-        It is clamped to the central zone (±3m) to stay in clean space.
+        """Place the target for the new episode.
+
+        - fixed:     random static position near the drone.
+        - waypoints: sequence of random static waypoints.
+        - moving:    horizontal lemniscate (∞) trajectory.  Only the starting
+                     phase is randomized per episode; the shape is controlled
+                     by ``lemniscate_scale`` (constructor parameter).
         """
         drone_pos = self.base_env.state[0:5:2]  # [x, y, z]
-        
-        # Random angle in full circle and random distance
-        angle = np.random.uniform(0, 2 * np.pi)
-        distance = np.random.uniform(1.0, self.target_range)
-        
-        self.target_pos = np.array([
-            drone_pos[0] + distance * np.cos(angle),
-            drone_pos[1] + distance * np.sin(angle),
-            drone_pos[2],  # SAME HEIGHT as drone
-        ])
-        
-        # Clamp to central zone (stay away from city edges)
-        self.target_pos = np.clip(self.target_pos, -3.0, 3.0)
-        
-        # For waypoints mode, generate a sequence at same height
-        if self.target_mode == 'waypoints':
-            n_waypoints = 5
-            self._waypoints = []
-            for _ in range(n_waypoints):
-                a = np.random.uniform(0, 2 * np.pi)
-                d = np.random.uniform(1.0, self.target_range)
-                wp = np.array([
-                    d * np.cos(a),
-                    d * np.sin(a),
-                    drone_pos[2],
-                ])
-                self._waypoints.append(np.clip(wp, -3.0, 3.0))
-            self._waypoint_idx = 0
-            self.target_pos = self._waypoints[0]
-        
+
+        if self.target_mode == 'moving':
+            # Sample starting phase ensuring min_start_distance from drone
+            for _ in range(200):
+                self._lemniscate_phase = np.random.uniform(0, 2 * np.pi)
+                x, y = self._lemniscate_point(self._lemniscate_phase)
+                dist = np.sqrt((x - drone_pos[0])**2 + (y - drone_pos[1])**2)
+                if dist >= self.min_start_distance:
+                    break
+
+            # Fixed height (same as drone's initial altitude = 0)
+            self.target_pos = np.array([x, y, 0.0])
+
+        else:
+            # Random angle in full circle and random distance
+            angle = np.random.uniform(0, 2 * np.pi)
+            distance = np.random.uniform(1.0, self.target_range)
+
+            self.target_pos = np.array([
+                drone_pos[0] + distance * np.cos(angle),
+                drone_pos[1] + distance * np.sin(angle),
+                drone_pos[2],  # SAME HEIGHT as drone
+            ])
+            self.target_pos = np.clip(self.target_pos, -3.0, 3.0)
+
+            # For waypoints mode, generate a sequence at same height
+            if self.target_mode == 'waypoints':
+                n_waypoints = 5
+                self._waypoints = []
+                for _ in range(n_waypoints):
+                    a = np.random.uniform(0, 2 * np.pi)
+                    d = np.random.uniform(1.0, self.target_range)
+                    wp = np.array([
+                        d * np.cos(a),
+                        d * np.sin(a),
+                        drone_pos[2],
+                    ])
+                    self._waypoints.append(np.clip(wp, -3.0, 3.0))
+                self._waypoint_idx = 0
+                self.target_pos = self._waypoints[0]
+
         # In filming mode, base env target stays at origin (navigation is purely visual).
         # In reach mode, base env shaping attracts toward target geometrically.
         if not self.filming_mode:
             self.base_env.set_target(self.target_pos)
-        
+
         # Update visual marker position
         self._update_target_marker_pos()
     
@@ -347,21 +396,17 @@ class Panda3DQuadrotorEnv(gym.Env):
                 self._update_target_marker_pos()
         
         elif self.target_mode == 'moving':
-            # Random movement using Ornstein-Uhlenbeck process
+            # Lemniscate (∞) trajectory along the horizontal plane.
+            # target_speed acts as angular-speed multiplier (curriculum-compatible).
+            # At speed=0.3 → ω≈0.6 rad/s → full loop ≈1050 steps (10.5 s)
             self._target_time += dt
-            
-            # Reversion to center and random noise
-            theta = 0.15    # strength of reversion
-            sigma = 0.3     # intensity of noise
-            
-            # Simple 2D OU process for x, y
-            vel = theta * (np.zeros(2) - self.target_pos[:2]) * dt + \
-                  sigma * np.random.randn(2) * np.sqrt(dt)
-            
-            self.target_pos[:2] += vel * self.target_speed * 10
-            self.target_pos[2] = drone_pos[2]  # Keep at drone height
-            
-            self.target_pos = np.clip(self.target_pos, -3.0, 3.0)
+            t = self._lemniscate_phase + self._target_time * self.target_speed * 2.0
+
+            x, y = self._lemniscate_point(t)
+            self.target_pos[0] = x
+            self.target_pos[1] = y
+            # Height stays fixed at 0.0 (set in _randomize_target)
+
             if not self.filming_mode:
                 self.base_env.set_target(self.target_pos)
             self._update_target_marker_pos()
@@ -386,74 +431,73 @@ class Panda3DQuadrotorEnv(gym.Env):
     def _compute_visual_tracking_reward(self):
         """
         Compute dense per-step reward based on visual target tracking.
-        
-        Detects the orange sphere in the 32×32 camera image by color,
-        then rewards:
-          - Centering: how close the sphere centroid is to image center
-          - Scale control: keeping the sphere at a consistent pixel size
-          - Penalty for not seeing the target (encourages yaw search)
-        
+
+        Detects the magenta sphere in the 32×32 camera image by colour,
+        then computes a reward based on the fraction of the image that
+        the target occupies:
+
+          - Within ±fraction_tolerance of ideal_fraction:
+            Positive exponential reward, max = max_visual_reward at ideal.
+          - Outside that band:
+            Negative exponential penalty that grows with the error.
+          - Target not visible:
+            Small fixed penalty to encourage searching.
+
         Returns:
             reward (float), info (dict)
         """
+        import math
+
         reward = 0.0
         info = {}
-        
-        img = self._last_high_freq_image  # (H, W, 3) uint8 RGB
+
+        img = self._last_high_freq_image  # (H, W, 3) uint8
         if img is None:
             return reward, info
-        
+
         h, w = img.shape[:2]
-        
-        # Detect orange pixels via HSV thresholding
+
+        # Detect magenta pixels via HSV thresholding
         img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-        # Orange hue range in HSV (OpenCV H: 0-180)
-        mask = cv2.inRange(hsv, (5, 100, 100), (25, 255, 255))
-        
+        mask = cv2.inRange(hsv, (140, 100, 100), (170, 255, 255))
+
         pixel_count = int(np.sum(mask > 0))
         total_pixels = h * w
-        target_visible = pixel_count > 2  # at least 3 orange pixels
-        
+        target_visible = pixel_count > 2
+
         info['target_visible'] = target_visible
         info['target_pixels'] = pixel_count
-        
+
         if target_visible:
             self._target_ever_seen = True
-            
-            # Compute centroid of detected pixels
+
+            target_fraction = pixel_count / total_pixels
+            error = abs(target_fraction - self.ideal_fraction)
+
+            if error <= self.fraction_tolerance:
+                # ── Positive reward: Gaussian peak at ideal_fraction ──
+                # max_visual_reward at error=0, ≈1% of max at boundary
+                normalized = error / self.fraction_tolerance  # 0→1
+                reward = self.max_visual_reward * math.exp(-5.0 * normalized ** 2)
+            else:
+                # ── Negative reward: exponential penalty beyond tolerance ──
+                excess = (error - self.fraction_tolerance) / self.fraction_tolerance
+                reward = -self.max_visual_reward * 0.1 * (math.exp(excess) - 1)
+                reward = max(reward, -self.max_visual_reward)  # floor
+
+            # Centroid (for logging / debug overlays)
             ys, xs = np.where(mask > 0)
             cx, cy = float(np.mean(xs)), float(np.mean(ys))
-            center_x, center_y = w / 2.0, h / 2.0
-            
-            # Normalized distance from centroid to image center (0=perfect, 1=corner)
-            max_dist = np.sqrt(center_x**2 + center_y**2)
-            dist_to_center = np.sqrt((cx - center_x)**2 + (cy - center_y)**2) / max_dist
-            
-            # CENTERING BONUS: +3.0 when perfectly centered, → 0 at edge
-            centering_reward = 3.0 * (1.0 - dist_to_center)
-            reward += centering_reward
-            
-            # SCALE CONTROL: +3.0 at ideal 8%, proportionally negative when far/close
-            target_fraction = pixel_count / total_pixels
-            ideal_fraction = 0.08  # ~8% of image
-            scale_error = abs(target_fraction - ideal_fraction) / max(ideal_fraction, 1e-6)
-            scale_reward = 3.0 * (1.0 - scale_error)  # Proportional: positive at ideal, negative far away
-            scale_reward = max(scale_reward, -3.0)     # Floor to prevent extreme penalties
-            reward += scale_reward
-            
-            # PROXIMITY PENALTY: penalize getting TOO close (> 20% of image)
-            if target_fraction > 0.20:
-                reward -= 3.0 * (target_fraction - 0.20) / 0.20
-            
-            info['centering_reward'] = float(centering_reward)
-            info['scale_reward'] = float(scale_reward)
-            info['target_center'] = (cx, cy)
+
             info['target_fraction'] = float(target_fraction)
+            info['fraction_error'] = float(error)
+            info['target_center'] = (cx, cy)
+            info['scale_reward'] = float(reward)
         else:
-            # Penalty for not seeing the target (encourages rotation to search)
-            reward -= 0.5
-        
+            # Small penalty to encourage rotating to find the target
+            reward = -5.0
+
         return reward, info
     
     def _setup_collision_system(self):
@@ -707,10 +751,11 @@ class Panda3DQuadrotorEnv(gym.Env):
         # Execute step in base environment (physics simulation)
         observation, reward, terminated, truncated, info = self.base_env.step(action)
 
-        # Neutralize +500 "solution achieved" bonus in filming mode
-        # (base env rewards hovering at origin, irrelevant for visual tracking)
-        if self.filming_mode and self.base_env.solved:
-            reward -= 500
+        # In filming mode, discard ALL base env rewards (position shaping
+        # toward origin, +500 arrival bonus, etc.).  Only keep the boundary
+        # violation penalty so the agent learns not to leave the map.
+        if self.filming_mode:
+            reward = -200.0 if terminated else 0.0
             self.base_env.solved = 0
 
         # Increment step counter for camera frame skip

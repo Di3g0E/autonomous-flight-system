@@ -136,6 +136,41 @@ Ver `PROJECT_HISTORY.md` para documentación detallada.
 
 ---
 
+## Seguimiento Visual y Modo Filming
+
+El entorno incluye un sistema de **seguimiento visual** donde el dron debe seguir una esfera magenta que traza una trayectoria en lemniscata (∞).
+
+### Características Principales
+- **Target magenta** con detección HSV (H: 140–170), eliminando falsos positivos en la escena urbana
+- **Recompensa basada en fracción**: el dron es recompensado por mantener el target en un tamaño ideal (∼25% de la imagen)
+- **Filming mode**: descarta toda la recompensa del entorno base (shaping posicional, bonus de llegada), dejando solo la señal visual como guía de aprendizaje
+- **Trayectoria lemniscata**: curva simétrica en ∞ con escala y velocidad configurables
+
+### Parámetros Clave
+| Parámetro | Default | Descripción |
+|---|---|---|
+| `ideal_fraction` | 0.25 | Fracción de píxeles ideal del target |
+| `fraction_tolerance` | 0.05 | Tolerancia para recompensa positiva |
+| `max_visual_reward` | 1000.0 | Recompensa máxima al alcanzar la fracción ideal |
+| `lemniscate_scale` | 2.5 | Semianchura de la trayectoria en ∞ |
+| `min_start_distance` | 3.0 | Distancia mínima drone-target al iniciar episodio |
+
+### Uso
+```python
+from src.envs.panda3d_quadrotor_env import Panda3DQuadrotorEnv
+
+env = Panda3DQuadrotorEnv(
+    use_camera=True,
+    use_target=True,
+    target_mode='moving',
+    filming_mode=True,
+    ideal_fraction=0.25,
+    lemniscate_scale=2.5,
+)
+```
+
+---
+
 # Guía de Uso del Simulador
 
 ### Controles de Cámara (Ventana 3D)
@@ -150,6 +185,8 @@ El software detecta automáticamente si faltan los archivos de calibración en `
 ### Nota sobre el Controlador
 El quadrotor se controla mediante una red neuronal entrenada con PPO. Puedes configurar el comportamiento en `scripts/run_simulation.py`:
 - **REAL_CTRL = True**: Usa los estados reales del simulador.
-- **REAL_CTRL = False**: Usa la simulación de sensores (acelerómetro, giroscopio, GPS).
+- **REAL_CTRL = False**: Usa la simulación de sensores (acelerómetro, giróscopo, GPS).
 - **HOVER = True**: El dron despega y se mantiene estable en el sitio.
 - **HOVER = False**: El dron comienza en un estado inicial aleatorio.
+
+Para el modo de seguimiento visual, usa `filming_mode=True` en `Panda3DQuadrotorEnv` — el dron aprenderá a seguir la esfera magenta basándose exclusivamente en la imagen de la cámara FPV.
