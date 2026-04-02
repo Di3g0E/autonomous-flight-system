@@ -78,8 +78,17 @@ Para verificar la integridad o realizar entrenamientos:
 # Ejecutar los tests
 pytest tests/
 
-# Entrenar un agente con Stable-Baselines3
+# Entrenar un agente con Stable-Baselines3 (hover control)
 python scripts/train_sb3.py
+
+# Entrenar seguimiento visual con curriculum v2 (lemniscata)
+python scripts/train_lemniscate_v2.py
+
+# Evaluar modelo de seguimiento v2
+python tests/test_lemniscate_v2.py
+
+# Validar posiciones de spawn
+python tests/test_spawn_positions.py
 
 # Evaluar un agente ya entrenado
 python scripts/evaluate_sb3.py
@@ -142,32 +151,108 @@ El entorno incluye un sistema de **seguimiento visual** donde el dron debe segui
 
 ### Características Principales
 - **Target magenta** con detección HSV (H: 140–170), eliminando falsos positivos en la escena urbana
-- **Recompensa basada en fracción**: el dron es recompensado por mantener el target en un tamaño ideal (∼25% de la imagen)
-- **Filming mode**: descarta toda la recompensa del entorno base (shaping posicional, bonus de llegada), dejando solo la señal visual como guía de aprendizaje
+- **Sistema de recompensa v2**: 6 componentes densos (survival, stability, centering, scale, discovery, not_visible) diseñados para que el seguimiento activo sea 11× más rentable que el hover pasivo
+- **Filming mode**: descarta toda la recompensa del entorno base, dejando solo la señal visual como guía
 - **Trayectoria lemniscata**: curva simétrica en ∞ con escala y velocidad configurables
+- **Inicialización constrained**: estados iniciales acotados (near-hover) con domain randomization progresiva
+
+### Sistema de Recompensa v2
+
+| Componente | Rango | Descripción |
+|---|---|---|
+| `R_survival` | +0.05 | Incentivo constante por mantenerse en vuelo |
+| `R_stability` | 0 → +1.0 | Gaussianas multiplicadas sobre velocidad angular y tilt |
+| `R_centering` | 0 → +3.0 | Centrado del target en la imagen FPV |
+| `R_scale` | 0 → +2.0 | Gaussiana asimétrica sobre fracción de imagen (ideal 25%) |
+| `R_discovery` | +3.0 | Bonus repetible cada vez que el target reaparece |
+| `R_not_visible` | -0.5/step | Penalización pasiva sin target visible |
 
 ### Parámetros Clave
 | Parámetro | Default | Descripción |
 |---|---|---|
-| `ideal_fraction` | 0.25 | Fracción de píxeles ideal del target |
-| `fraction_tolerance` | 0.05 | Tolerancia para recompensa positiva |
-| `max_visual_reward` | 1000.0 | Recompensa máxima al alcanzar la fracción ideal |
-| `lemniscate_scale` | 2.5 | Semianchura de la trayectoria en ∞ |
-| `min_start_distance` | 3.0 | Distancia mínima drone-target al iniciar episodio |
+| `use_new_reward` | False | Activa el sistema de recompensa v2 |
+| `initial_target_distance` | 2.0 | Distancia fija dron-target en Fase A |
+| `constrained_init` | False | Inicialización near-hover acotada |
+| `init_pos_range` | 0.5 | Rango de posición inicial (m) |
+| `init_vel_range` | 0.25 | Rango de velocidad inicial (m/s) |
+| `init_ang_range` | 0.1 | Rango de ángulos iniciales (rad) |
+| `lemniscate_scale` | 5.0 | Semianchura de la trayectoria en ∞ |
 
 ### Uso
 ```python
 from src.envs.panda3d_quadrotor_env import Panda3DQuadrotorEnv
 
+# Modo v2 con recompensa multicomponente
 env = Panda3DQuadrotorEnv(
     use_camera=True,
     use_target=True,
     target_mode='moving',
     filming_mode=True,
-    ideal_fraction=0.25,
-    lemniscate_scale=2.5,
+    use_new_reward=True,
+    initial_target_distance=2.0,
+    constrained_init=True,
+    lemniscate_scale=5.0,
 )
 ```
+
+### Entrenamiento con Curriculum Adaptativo
+```bash
+# Entrenar con curriculum de 3 fases (hover → lemniscata lenta → rápida)
+python scripts/train_lemniscate_v2.py
+```
+
+El script `train_lemniscate_v2.py` implementa:
+- **Fase A** (0–30%): Target fijo a 2m, aprender hover + centrado
+- **Fase B** (30–70%): Lemniscata lenta (0.02→0.16 m/s)
+- **Fase C** (70–100%): Lemniscata a velocidad completa (0.16→0.30 m/s)
+- Transfer learning desde `models/goal_controller/best_model.zip`
+- Domain randomization basada en rendimiento (no temporal)
+
+---
+
+## Hover Tracking (v3) — Cámara Vertical + SAC
+
+Sistema de seguimiento donde el dron se posiciona sobre la esfera y la mantiene centrada en una cámara que apunta hacia abajo, a la distancia calibrada de **1.394m**.
+
+### Características Principales
+- **Cámara vertical** (`pitch=-90°`): observa la esfera desde arriba
+- **Observación centroide** (19-D flat): estado(13) + centroid_x, centroid_y, fraction, visible, delta_cx, delta_cy
+- **Sin CNN**: features extraídas por detección HSV (buffer ~21 MB vs ~1.2 GB)
+- **SAC** con entropía auto-ajustada (off-policy, sample-efficient)
+- **Espiral de búsqueda**: modelo RL pre-entrenado que se activa cuando la esfera se pierde durante 0.2s
+
+### Sistema de Recompensa v3 (3 componentes, rango [-1, +4])
+
+| Componente | Rango | Descripción |
+|---|---|---|
+| `R_stability` | 0 → +1.0 | Vuelo estable (baja velocidad angular, bajo tilt) |
+| `R_centering` | 0 → +2.0 | Esfera centrada en la imagen |
+| `R_scale` | 0 → +1.0 | Fracción de imagen cercana al 25% (gaussiana asimétrica) |
+| `R_invisible` | -1.0 | Penalización cuando la esfera no es visible |
+
+### Uso
+```bash
+# Entrenar hover tracking (SAC, ~7h para 200k steps)
+python scripts/train_hover_track.py --timesteps 200000
+
+# Evaluar con espiral de búsqueda
+python tests/test_hover_track.py --model-path ./models/hover_track/best_model.zip
+
+# Evaluar con target en movimiento
+python tests/test_hover_track.py --target-mode moving --target-speed 0.1
+
+# Entrenar modelo de espiral (prerequisito)
+python scripts/train_spiral_follow.py --timesteps 500000
+```
+
+### Resultados (200k steps)
+| Métrica | Inicio | Final |
+|---|---|---|
+| Reward | 152 | 1,574 (+10.3×) |
+| Visibilidad | 62% | 91% |
+| Centering | 0.43 | 0.27 (-37%) |
+| Estabilidad | 0.59 | 0.99 |
+| Episodios completos | ~20% | 100% |
 
 ---
 

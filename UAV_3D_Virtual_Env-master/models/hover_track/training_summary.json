@@ -1,0 +1,11 @@
+{
+  "total_episodes": 509,
+  "final_mean_reward": 1743.3600633199997,
+  "csv_path": "models\\hover_track\\training_log.csv",
+  "total_timesteps": 200000,
+  "training_time_seconds": 25643.405391216278,
+  "hover_height": 1.394,
+  "algorithm": "SAC",
+  "observation_dim": 19,
+  "policy_params": 56908
+}

@@ -1,0 +1,29 @@
+ALTITUDE CALIBRATION RESULT
+==================================================
+Date:                 2026-03-30
+Sphere radius:        0.25 m
+Target fraction:      25 %
+Camera focal length:  45.0 mm
+Camera film size:     36.0×24.0 mm
+Buffer:               1920×1080
+Effective film h:     20.25 mm
+
+THEORETICAL (pinhole model):
+  This buffer:        1.4981 m
+  Film native (3:2):  1.3796 m
+  Training   (16:9):  1.4981 m
+  Square     (1:1):   1.1356 m
+
+EMPIRICAL:
+  32×32 px:           1.3943 m
+  128×128 px:           1.3876 m
+
+RECOMMENDED HOVER HEIGHT: 1.394 m
+  (measured at 32×32 px — same resolution as reward pipeline)
+
+ASPECT RATIO NOTES:
+  The effective vertical FOV depends on the buffer aspect ratio.
+  Panda3D adjusts VFOV to match: eff_h = film_w / buffer_aspect.
+  A 16:9 buffer narrows the VFOV → sphere appears bigger →
+  larger distance needed for 25 %.
+  Ensure the training window matches the calibration window.

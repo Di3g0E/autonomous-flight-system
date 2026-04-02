@@ -1135,3 +1135,1012 @@ El análisis de los tests de seguimiento en lemniscata reveló que el dron no se
 3. Repetir los tests de lemniscata follow con el nuevo modelo.
 4. Comparar métricas con los resultados de la Fase 7.
 
+---
+
+## [Fecha: 2026-03-27] - Sistema de Recompensa v2 y Entrenamiento con Curriculum Adaptativo (Fase 8)
+
+### Motivación
+
+El sistema de recompensa basado en fracción de imagen (Fase 7–8 anterior) resultó insuficiente para guiar el aprendizaje. El agente no convergía: la señal de recompensa era demasiado ruidosa y no proporcionaba suficiente gradiente para distinguir entre comportamientos deseados (seguimiento activo) e indeseados (hover pasivo). Además, la penalización de boundary de -200 introducía una variabilidad excesiva que impedía al agente asociar correctamente sus acciones con las recompensas recibidas.
+
+Se realizó un análisis exhaustivo del plan de entrenamiento v1 que identificó tres debilidades principales:
+1. **`R_precision` redundante** con `R_scale`, añadiendo ruido sin información nueva.
+2. **`R_search` explotable**: el agente podía acumular recompensa girando el yaw sin buscar realmente el target (*reward hacking*).
+3. **Depth prematuro**: añadir percepción de profundidad antes de dominar el seguimiento visual aumentaba innecesariamente el espacio de búsqueda.
+
+Y tres mecanismos ausentes de alto impacto:
+1. **`VecNormalize`** para estabilizar la distribución de recompensas.
+2. **Curriculum adaptativo** para escalar la dificultad según el rendimiento real del agente.
+3. **Freeze del feature extractor** para transfer learning efectivo desde el goal controller previo.
+
+### Descripción
+
+#### **Sistema de recompensa v2: 6 componentes densos**
+
+Se rediseñó completamente la función de recompensa en `_compute_new_reward()` con 6 componentes independientes, verificados numéricamente para garantizar que el seguimiento activo (6.05/step) sea 11× más rentable que el hover pasivo (0.55/step):
+
+| Componente | Rango | Propósito |
+|---|---|---|
+| **R_survival** | +0.05 | Constante por step, incentiva mantenerse en vuelo |
+| **R_stability** | 0 → +1.0 | Gaussianas separadas para velocidad angular y tilt (`exp(-3·ω²) × exp(-3·tilt²)`), normalizadas por baselines (10.0 rad/s, π/2 rad) |
+| **R_centering** | 0 → +3.0 | Gaussiana sobre distancia normalizada del centroide magenta al centro de la imagen |
+| **R_scale** | 0 → +2.0 | Gaussiana asimétrica sobre fracción de imagen (ideal 25%). σ_far=0.12 (tolerante), σ_near=0.06 (estricta). Penalización lineal si fracción > 40% (riesgo de colisión) |
+| **R_discovery** | +3.0 (repetible) | Bonus cada vez que el target reaparece tras haber estado oculto (transición invisible→visible). Incentiva recuperación, no solo descubrimiento inicial |
+| **R_not_visible** | -0.5/step | Penalización pasiva cuando el target no se detecta. Combinado con R_survival (+0.05), genera presión neta de -0.45/step sin prescribir el método de búsqueda |
+
+**Decisiones de diseño clave:**
+
+- **R_discovery repetible** (no one-time): En episodios de 1000 steps, un bonus único de +3.0 se amortiza a +0.003/step, insuficiente como incentivo. Al hacerlo repetible (cada re-aparición tras pérdida), se incentiva tanto el descubrimiento inicial como la recuperación tras pérdida del target — comportamiento esencial en seguimiento real.
+- **R_scale con gaussiana asimétrica**: En lugar de una gaussiana simétrica + penalización separada, se usa una única función asimétrica donde la caída es más rápida por encima del ideal (σ_near=0.06) que por debajo (σ_far=0.12). Esto castiga más estar demasiado cerca (peligro de colisión) que demasiado lejos. La penalización lineal para fracción > 40% es un tope de seguridad adicional.
+- **R_stability con gaussianas multiplicadas**: `exp(-3·ω²) × exp(-3·tilt²)` en lugar de sumar — cada componente debe ser bajo independientemente para obtener recompensa alta. Resuelve el problema de unidades diferentes entre velocidad angular y ángulos.
+- **Penalización de boundary reducida**: -200 → -10. El valor anterior añadía variabilidad excesiva en las recompensas, impidiendo que el agente asociara correctamente acciones con resultados. Con -10, la señal es suficiente para disuadir sin dominar el landscape de rewards.
+
+#### **Inicialización constrained (near-hover)**
+
+Nuevo modo `constrained_init=True` que genera estados iniciales acotados en lugar de completamente aleatorios:
+- Posición: ±`init_pos_range` (default 0.5m)
+- Velocidad: ±`init_vel_range` (default 0.25 m/s)
+- Ángulos: ±`init_ang_range` (default 0.1 rad)
+
+Los rangos se amplían progresivamente mediante domain randomization vinculada al rendimiento (no al progreso temporal), evitando ampliar la dificultad antes de que el agente esté preparado.
+
+#### **Target a distancia fija (Fase A)**
+
+Nuevo parámetro `initial_target_distance=2.0`: en la Fase A del curriculum, el target se coloca siempre a exactamente 2.0m del dron (distancia horizontal), a la misma altura. Esto proporciona un problema estacionario y reproducible para aprender los fundamentos de centrado y escala antes de introducir movimiento.
+
+#### **Entrenamiento con curriculum de 3 fases (`train_lemniscate_v2.py`)**
+
+Script de entrenamiento completo (~680 líneas) con las siguientes innovaciones:
+
+**Curriculum de 3 fases (adaptativo, no temporal):**
+
+| Fase | Rango | Target | Velocidad | Objetivo |
+|---|---|---|---|---|
+| **A** | 0 – 30% | Fijo a 2.0m | 0 m/s | Aprender hover + centrado + escala |
+| **B** | 30 – 70% | Lemniscata | 0.02 → 0.16 m/s | Seguimiento lento con adaptación progresiva |
+| **C** | 70 – 100% | Lemniscata | 0.16 → 0.30 m/s | Seguimiento a velocidad completa |
+
+La transición entre fases usa **thresholds adaptativos** (visibilidad > 75%, centering > 2.0, episode_length > 200) con fallback al 40% del entrenamiento si no se alcanzan. Esto evita que el agente se quede atrapado indefinidamente en una fase.
+
+**Transfer learning con freeze selectivo:**
+- Carga `models/goal_controller/best_model.zip` (CNN ya entrenada para detectar magenta en 32×32).
+- **Fase A**: Feature extractor CNN **congelado**; solo se entrenan las cabezas de política y valor (reinicializadas con `orthogonal_(gain=√2)`).
+- **Fase B+**: Feature extractor **descongelado** con lr reducido (1e-5) para fine-tuning suave sin destruir lo aprendido. Las cabezas ya calibradas guían la adaptación del CNN al nuevo objetivo (tracking vs navegación).
+
+**Entropy scheduling con bump por cambio de fase:**
+- Base: `ent_coef=0.01`, decae linealmente a 0.003.
+- Al cambiar de fase, se resetea a 0.04 y decae de vuelta a base en 30 rollouts.
+- Esto fuerza re-exploración cuando la distribución del problema cambia (target fijo → móvil).
+
+**Domain randomization basada en rendimiento:**
+- Nivel DR ∈ [0, 1] calculado a partir del reward medio normalizado (rolling window).
+- El DR **solo sube** (ratchet) — nunca retrocede para evitar oscilaciones.
+- Mapea a rangos de init: posición 0.2→1.0m, velocidad 0.1→0.5 m/s, ángulos 0.05→0.20 rad.
+- **Vinculado al rendimiento**, no al progreso temporal: si el agente no está listo, el DR no avanza.
+
+**Configuración PPO optimizada:**
+- `n_steps=4096`, `batch_size=64` → 64 mini-batches × 10 épocas = 640 gradient steps/update (2× más estable que v1).
+- `clip_range=0.15`: compromiso entre 0.1 (restrictivo para features congeladas) y 0.2 (permisivo para fine-tuning).
+- `max_grad_norm=0.5`: previene explosión de gradientes, especialmente importante con feature extractor congelado.
+- `VecNormalize(norm_reward=True, gamma=0.99)`: estabiliza la distribución de recompensas.
+
+#### **Test de posiciones de spawn (`test_spawn_positions.py`)**
+
+Script de validación visual (~314 líneas) que verifica que la distancia dron-target es correcta:
+- Inicializa el entorno 10 veces con spawn aleatorio.
+- Graba vídeo aéreo (3 seg/inicialización) con overlay de coordenadas y distancias.
+- Genera gráfica matplotlib con las 10 posiciones drone-target en vista cenital.
+- **Resultado**: Confirma distancia exacta de 2.0m en todas las configuraciones.
+
+#### **Evaluación del modelo v2 (`test_lemniscate_v2.py`)**
+
+Script de evaluación (~326 líneas) con telemetría detallada:
+- N episodios de evaluación con grabación side-by-side (FPV + aérea).
+- CSV per-step con los 6 componentes de reward v2 + posición + distancia + visibilidad.
+- JSON de resumen con métricas agregadas.
+- Overlay de anotaciones en vídeo para análisis visual.
+
+### Archivos Afectados
+
+#### Modificados:
+- `src/envs/panda3d_quadrotor_env.py` (+162 líneas): `_compute_new_reward()`, `constrained_init`, `initial_target_distance`, reducción boundary penalty (-200→-10), imports de `math` y `euler_quat`, escala del target marker corregida.
+
+#### Nuevos:
+- `scripts/train_lemniscate_v2.py` (~682 líneas): Entrenamiento con curriculum adaptativo de 3 fases, transfer learning, domain randomization, entropy bumps.
+- `tests/test_lemniscate_v2.py` (~326 líneas): Evaluación con telemetría per-step y grabación de vídeo.
+- `tests/test_spawn_positions.py` (~314 líneas): Validación visual de inicializaciones.
+
+#### Datos generados:
+- `experiments/spawn_test/spawn_positions.mp4`: Vídeo de 10 configuraciones de spawn.
+- `experiments/spawn_test/spawn_summary.png`: Gráfica cenital de posiciones.
+- `models/lemniscate_v2/training_log.csv`: 6 episodios iniciales con desglose de 6 componentes de reward.
+- `models/lemniscate_v2/recordings/`: Vídeos periódicos durante entrenamiento.
+
+### Resultados Preliminares (6 episodios, Fase A)
+
+| Métrica | Ep. 1 | Ep. 6 | Tendencia |
+|---------|-------|-------|-----------|
+| R_stability | 0.89 | 0.92 | ↑ Estable y alto |
+| Visibilidad | 0% | 26.4% | ↑ Mejorando |
+| Target speed | 0 m/s | 0 m/s | Fase A (target fijo) |
+
+El entrenamiento se encuentra en las fases iniciales. La estabilidad alta desde el primer episodio confirma que el transfer learning del goal controller funciona correctamente — el agente ya sabe volar, solo necesita aprender a seguir.
+
+### Comparativa v1 → v2
+
+| Aspecto | v1 | v2 |
+|---|---|---|
+| Componentes de reward | 6 + depth | 6 (sin depth, pospuesto) |
+| R_search | Explotable (yaw farming) | Eliminado → R_discovery repetible + R_not_visible pasivo |
+| R_precision | Redundante con R_scale | Eliminado |
+| R_stability | Suma de unidades diferentes | Gaussianas separadas y normalizadas |
+| Init randomization | Fijo ±0.5m | Progresivo, vinculado a rendimiento |
+| Transfer learning | Carga completa (value incorrecto) | Freeze extractor + reinit heads |
+| Curriculum | 30–70% fijo temporal | Adaptativo con thresholds + fallback |
+| VecNormalize | Ausente | Incluido |
+| ent_coef | 0.005 fijo (muy bajo) | 0.01→0.003 + bumps por fase |
+| Learning rate | 1e-4 fijo | 1e-4→1e-5 decay |
+| Boundary penalty | -200 (variabilidad excesiva) | -10 (señal suficiente) |
+| Evaluación | Sin baseline ni seeds | 3 seeds + baseline + OOD planificado |
+| Envs paralelos | "Debería usar" | Justificado por qué no es viable (single GPU context Panda3D) |
+
+### Observaciones
+
+1. **El análisis anti-reward-hacking es fundamental**: Verificar numéricamente que tracking (6.05/step) >> hover (0.55/step) con ratio 11× garantiza que el gradiente apunta en la dirección correcta. Este tipo de análisis debería preceder a cualquier entrenamiento RL.
+
+2. **VecNormalize vs análisis con valores absolutos**: Tras normalización, los ratios absolutos cambian. Se debe verificar post-normalización que el ratio tracking/hover se mantiene significativamente > 1.
+
+3. **Profundidad pospuesta deliberadamente**: Se documenta como decisión explícita, no como omisión. La condición de re-evaluación es: "integrar depth si R_scale resulta insuficiente para mantener distancia óptima". `# TODO: Phase 2.5 - depth integration if R_scale insufficient`.
+
+4. **Limitación de hardware**: Panda3D requiere contexto gráfico GPU para renderizar texturas. Múltiples instancias del entorno no son viables con una sola GPU, lo que descarta entornos paralelos (`SubprocVecEnv`). Esta es una limitación real del simulador, no un defecto del plan.
+
+5. **Primeras 50-100k steps**: Se espera poco progreso visible — con policy aleatoria, encontrar un target a 2m con cámara 32×32 y FOV limitado requiere exploración aleatoria extensiva. No se deben cambiar hiperparámetros prematuramente.
+
+### Siguientes Pasos
+1. Completar entrenamiento Fase A y verificar transición a Fase B.
+2. Monitorizar gradient norms — con feature extractor congelado, los gradientes solo fluyen por las heads y podrían saturarse.
+3. Verificar post-VecNormalize que el ratio tracking/hover se mantiene.
+4. Tras convergencia en Fase C, evaluar con 3 seeds (42, 123, 456) para mean ± std.
+5. Tests de generalización: escalas de lemniscata (2.5, 5.0, 7.5m), velocidades OOD (0.4, 0.5 m/s), init no constrained.
+6. Evaluar robustez a perturbaciones (ráfagas de viento) como trabajo futuro.
+7. Re-evaluar integración de depth si R_scale no es suficiente para mantener distancia óptima.
+
+---
+
+## [Fecha: 2026-03-30] - Calibración de Altitud y Test de Búsqueda en Espiral
+
+### Motivación
+Antes de entrenar la Fase 2 (hover tracking con búsqueda), es necesario determinar empíricamente dos parámetros fundamentales: (1) la **distancia vertical óptima** entre el dron y la esfera para que ocupe el 25% de los píxeles centrales de la cámara, y (2) calibrar un **controlador de búsqueda en espiral** determinista que recupere la esfera cuando se pierde de vista, validando su cobertura angular y velocidad de detección.
+
+### Descripción
+
+#### Test 1: Calibración de Altitud (`test_altitude_calibration.py`)
+
+Determina la altura óptima de hover mediante dos enfoques complementarios:
+
+- **Modelo teórico (pinhole)**: Calcula la distancia usando la geometría de la lente (focal 45mm, film 36×24mm) y la resolución del buffer. El FOV vertical efectivo depende del aspect ratio del buffer — Panda3D ajusta el VFOV para mantener coherencia: `eff_h = film_w / buffer_aspect`.
+- **Medición empírica**: Barrido de altitudes (0.5–3.0m) con capturas reales de la cámara FPV a 32×32 y 128×128 px. Para cada altitud, se cuenta la fracción de píxeles magenta mediante umbral HSV (H:140–170, S:100–255, V:100–255) y se interpola la altura que produce exactamente el 25%.
+
+**Resultado**: Altura óptima de hover = **1.394 m** (medida a 32×32 px, la misma resolución que el pipeline de reward).
+
+Muestras visuales generadas a 0.75m, 1.00m, 1.50m, 2.00m y 2.50m para verificación visual de la detección HSV.
+
+#### Test 2: Búsqueda en Espiral (`test_spiral_search.py`)
+
+Implementa y calibra un `SpiralSearchController` determinista — espiral de Arquímedes que se activa cuando el target se pierde durante K=20 steps consecutivos (0.2s). El controlador opera sin RL, como fallback de seguridad.
+
+**Arquitectura del controlador (versión final)**:
+
+- **Trajectory tracking con feedforward**: La posición deseada se define paramétricamente como `x(t) = r(t)·cos(θ(t)), y(t) = r(t)·sin(θ(t))` donde `r(t) = r_growth·t + 0.05`. El feedforward incluye automáticamente los términos centrípeto (`-r·ω²`) y Coriolis (`-2·ṙ·ω`), garantizando error de tracking cero en régimen estable.
+- **Omega adaptativo**: La velocidad angular se reduce automáticamente a radios grandes para no saturar el tilt máximo: `ω(r) = min(ω_max, sqrt(0.7·g·sin(max_tilt) / r))`. Esto permite arrancar rápido cerca del centro (ω=1.5 rad/s) y expandir los anillos a la velocidad justa para cubrir el FOV sin solapamiento excesivo.
+- **PD de estabilización**: Controlador PD en actitud (Kp_att=1.0, Kd_att=0.15) y altitud (Kp_z=0.5, Kd_z=0.3) para mantener hover estable durante la maniobra.
+- **Handoff suave**: Al re-detectar la esfera, transición gradual (15 steps) de acción espiral a acción RL mediante blending lineal `action = (1-α)·action_spiral + α·action_RL`.
+
+**Proceso iterativo de desarrollo** (6 iteraciones):
+
+| Iteración | Problema identificado | Corrección |
+|---|---|---|
+| v1 (body-frame pitch + yaw) | Círculo offset, no espiral centrada | Cambio a velocity tracking inercial |
+| v2 (velocity P + centering PD) | PD centering bloquea expansión | Reducción de Kp_center |
+| v3 (velocity P + centripetal FF) | v_err→0 en steady state, sin fuerza centrípeta | Feedforward con v_actual |
+| v4 (trajectory tracking) | **Roll/pitch intercambiados** en la conversión inercial→body | Swap: `pitch = (cos(ψ)·ax + sin(ψ)·ay)/g` |
+| v5 (post-fix, ω=1.2) | Solapamiento 62% entre anillos | Aumento de r_growth |
+| v6 (ω=2.5, rg=0.25) | Caída de altitud 34cm, tracking impreciso | Omega adaptativo + parámetros moderados |
+
+**Bug crítico (v4)**: La conversión de aceleración inercial a ángulos body-frame tenía roll y pitch intercambiados. La cadena correcta del simulador es: pitch positivo → aceleración en +X (state[0]), roll positivo → aceleración en -Y (state[2]). El código original asignaba `desired_roll = a_body_right / g` (que es pitch) y `desired_pitch = -a_body_fwd / g` (que es roll), causando una rotación de 90° en la dirección de fuerza.
+
+**Estructura del test (3 fases)**:
+
+1. **Phase 1 — Parameter sweep**: 9 combinaciones de (ω, r_growth) probadas a 1.0m en ángulos opuestos (0° + 180°). Una combinación solo pasa si detecta en AMBAS direcciones.
+2. **Phase 2 — Position robustness**: 40 posiciones (8 ángulos × 5 distancias: 0.5–2.5m) con los mejores parámetros.
+3. **Phase 3 — Handoff + trajectory**: Ejecución extendida con grabación de trayectoria para analizar calidad del handoff y estabilidad de altitud.
+
+### Archivos Afectados
+
+**Tests nuevos:**
+- `tests/test_altitude_calibration.py` (~200 líneas): Calibración teórica + empírica de hover height.
+- `tests/test_spiral_search.py` (~870 líneas): SpiralSearchController + test de 3 fases con visualización.
+
+**Datos generados:**
+- `experiments/altitude_calibration/calibration_result.txt`: Resultado numérico (1.394m).
+- `experiments/altitude_calibration/altitude_vs_fraction.png`: Curva fracción vs altitud.
+- `experiments/altitude_calibration/sample_*.png`: Muestras visuales a distintas altitudes.
+- `experiments/spiral_search/spiral_summary.txt`: Parámetros óptimos y resultados completos.
+- `experiments/spiral_search/param_sweep_heatmap.png`: Heatmap del sweep (ω × r_growth).
+- `experiments/spiral_search/position_polar.png`: Mapa polar de tiempos de detección.
+- `experiments/spiral_search/trajectory.png`: Trayectoria top-down, altitud y yaw vs tiempo.
+
+### Resultados
+
+#### Calibración de altitud
+
+| Método | Altura (m) |
+|---|---|
+| Teórico (pinhole, buffer 1920×1080) | 1.498 |
+| Teórico (film nativo 3:2) | 1.380 |
+| Empírico 32×32 px | **1.394** |
+| Empírico 128×128 px | 1.388 |
+
+Se adopta **1.394m** por coincidir con la resolución del pipeline de reward (32×32).
+
+#### Búsqueda en espiral (parámetros finales)
+
+| Parámetro | Valor |
+|---|---|
+| omega_orbit | 1.5 rad/s (adaptativo, se reduce con r) |
+| r_growth | 0.15 m/s |
+| Kp_xy / Kv | 1.50 / 1.50 |
+| max_tilt | 0.25 rad (14.3°) |
+| yaw_delta | 0.02 (rotación lenta de FOV) |
+
+**Phase 1 — Sweep (últimos resultados, ω=1.2–1.8 × rg=0.12–0.18):**
+
+| ω \ rg | 0.12 | 0.15 | 0.18 |
+|---|---|---|---|
+| 1.2 | 4.75s | 4.86s | 4.95s |
+| 1.5 | 3.92s | 3.95s | 3.98s |
+| 1.8 | **3.33s** | 3.34s | 3.37s |
+
+**9/9 combinaciones exitosas** — el controlador es robusto a variaciones de parámetros.
+
+**Phase 2 — Cobertura angular:**
+
+| Distancia | Tasa detección | Tiempo medio | Peor caso |
+|---|---|---|---|
+| 0.5m | 8/8 (100%) | 1 step (inmediato) | 1 step |
+| 1.0m | 8/8 (100%) | 0.24s | 4.35s |
+| 1.5m | 8/8 (100%) | 0.43s | 6.78s |
+| 2.0m | 8/8 (100%) | 0.74s | 10.66s |
+| 2.5m | 8/8 (100%) | 1.12s | 14.32s |
+
+**Detección 100% (40/40)** con cobertura angular uniforme en 360°.
+
+**Phase 3 — Handoff:** Desplazamiento al momento de detección = 0.95m (el dron permanece cerca del origen durante la espiral).
+
+### Observaciones
+
+1. **El roll/pitch swap fue el bug más costoso** — consumió 4 iteraciones de debug. La lección es verificar la cadena completa de coordenadas (acción → motor → torque → ángulo → aceleración inercial → estado) antes de diseñar cualquier controlador.
+
+2. **El trajectory tracking con feedforward es estructuralmente superior** al velocity tracking con centripetal FF. En un controlador P de velocidad, el error de velocidad → 0 en régimen estable, eliminando toda fuerza — incluida la centrípeta necesaria para orbitar. El trajectory tracking mantiene el error de posición como señal de control, y el feedforward aporta la centrípeta directamente.
+
+3. **El omega adaptativo es clave para escalabilidad**: sin él, el tilt se satura a radios grandes (a_centrípeta = ω²·r > g·sin(max_tilt)), el dron no puede seguir la espiral y se expande descontroladamente. Con la adaptación, la espiral ralentiza su giro pero mantiene separación inter-anillo igual al diámetro del FOV.
+
+4. **Optimización de rendimiento**: La ventana de Panda3D se reduce a 64×64 con `--no-display` (vs 1920×1080 por defecto), reduciendo ~500× los píxeles renderizados sin afectar la detección HSV (imagen final = 32×32 en todos los casos).
+
+### Siguientes Pasos
+1. Integrar el `SpiralSearchController` en el pipeline de entrenamiento Fase 2 como fallback determinista cuando el agente RL pierde el target.
+2. Definir la arquitectura de la Fase 2 (hover tracking): init con `z_drone = 1.394m`, esfera en `z = 0`, `constrained_init` adaptado para inicializar z del dron cerca de la altura calibrada.
+3. Entrenar el agente RL de hover tracking con el controlador de espiral como safety net.
+
+---
+
+## [Fecha: 2026-03-31 / 2026-04-01] - Entrenamiento de Espiral RL + Hover Tracking con SAC (Fase 9)
+
+### Motivación
+
+Tras el análisis del entrenamiento de lemniscate follower (Fase 8), se identificó que el modelo se estancaba en un óptimo local: el agente reducía penalizaciones (reward de -2100 a -265) pero no aprendía a localizar el target (solo 2.2% de episodios con visibilidad >50%). Las causas raíz eran:
+
+1. **"Desierto de reward"**: con la cámara mirando al frente y el target al mismo nivel, el agente no recibía señal útil cuando el target salía del FOV (penalización de -0.5/step insuficiente).
+2. **Espacio de acción de bajo nivel + exploración insuficiente**: aprender simultáneamente a volar Y seguir con 4 throttles directos multiplicaba la complejidad.
+3. **Discontinuidad en la función de reward**: transición abrupta entre +1000 (dentro de tolerancia) y penalización exponencial creaba un landscape difícil de navegar.
+
+Se rediseñó la estrategia completa con dos decisiones arquitectónicas clave:
+
+- **Cámara apuntando hacia abajo** (`pitch=-90°`): el dron observa la esfera desde arriba a la distancia calibrada (1.394m). La esfera siempre está "potencialmente visible" — el problema se reduce a mantener posición relativa.
+- **Observación centroide (19-D flat)** en lugar de CNN: el HSV ya detecta perfectamente la esfera magenta; re-aprender esto con una CNN es redundante. Se extraen 6 valores (cx, cy, fraction, visible, delta_cx, delta_cy) y se concatenan con el estado (13-D), resultando en una observación Box(19,) que permite usar MlpPolicy (sin CNN) con un replay buffer ~80× más pequeño.
+
+Adicionalmente se entrenó un modelo de espiral RL independiente (`SpiralFollowEnv`) para la búsqueda cuando el target se pierde.
+
+### Descripción
+
+#### **Modelo de espiral RL (`SpiralFollowEnv` + `train_spiral_follow.py`)**
+
+Entorno wrapper que genera una trayectoria de espiral de Arquímedes como referencia y recompensa al dron por seguirla. Diseñado como "política de búsqueda" que se activa cuando el tracking RL pierde el target.
+
+**Observación** (18-D): 13 de estado + dx, dy (error normalizado a la referencia), vx_n, vy_n (dirección de velocidad de referencia), dz (error de altitud normalizado).
+
+**Reward** (6 componentes):
+| Componente | Rango | Descripción |
+|---|---|---|
+| R_tracking | 0 → +2.0 | Gaussiana sobre error de posición al punto de referencia |
+| R_velocity | 0 → +1.0 | Similitud coseno con velocidad de referencia |
+| R_altitude | 0 → +1.0 | Gaussiana sobre error de altitud respecto a hover_height |
+| R_stability | 0 → +1.0 | Velocidad angular × tilt (misma fórmula que v2) |
+| R_progress | +0.1 | Supervivencia constante |
+| R_off_track | -0.5 | Penalización cuando pos_error > vision_radius |
+
+**Curriculum de 2 fases**:
+- **Fase A** (0–40%): ω_scale 0.3→0.7 (espiral lenta), init_pos ±0.1m
+- **Fase B** (40–100%): ω_scale 0.7→1.0 (velocidad completa), init_pos ±0.5m
+
+**Parámetros de la espiral**:
+- ω_base = 1.8 rad/s (con adaptación centrípeta: `ω = min(ω_base, sqrt(a_budget/r))`)
+- r_growth = 0.12 m/s, hover_height = 1.39m
+- Arm spacing = 0.42m (58% overlap con vision_radius=0.5m)
+- PPO MlpPolicy con net_arch=[64, 32], 2048 n_steps
+
+**Resultados del entrenamiento espiral**: Modelo guardado en `models/spiral_follow/best_model.zip` con VecNormalize.
+
+#### **Hover Tracking con SAC — Cambio de paradigma**
+
+Se abandonó el enfoque PPO + CNN en favor de SAC + MlpPolicy, justificado por un análisis comparativo:
+
+**¿Por qué SAC en lugar de PPO?**
+
+| Criterio | PPO | SAC |
+|---|---|---|
+| Sample efficiency | Baja (on-policy, descarta datos) | Alta (off-policy, replay buffer) |
+| Exploración | Depende de ent_coef manual | Entropía auto-ajustada |
+| Acciones continuas | Bueno | Superior (distribución gaussiana optimizada) |
+| Estabilidad con obs baja-dim | Buena | Excelente |
+| Riesgo con CNN | Bajo (on-policy, datos frescos) | Alto (stale features en buffer) |
+| **Decisión con obs 19-D** | No elegido | **Elegido** (sin CNN, buffer ligero) |
+
+SAC con MlpPolicy y observación 19-D combina las ventajas del off-policy learning con un espacio de parámetros reducido (~57k).
+
+**Hiperparámetros SAC** (optimizados tras análisis detallado):
+
+| Parámetro | Valor | Justificación |
+|---|---|---|
+| `learning_rate` | 3e-4 | Estándar SAC |
+| `buffer_size` | 300,000 | ~21 MB con obs 19-D (viable en 8 GB RAM) |
+| `learning_starts` | 5,000 | 10 episodios de diversidad (no 1,000 que produciría samples idénticos) |
+| `batch_size` | 256 | Estándar para off-policy |
+| `gamma` | 0.995 | Horizonte ~200 steps (2s). Con 0.99, el agente solo "mira" 1s adelante — insuficiente para valorar el coste de perder la esfera |
+| `train_freq` | 4 | Agrupa gradient steps para reducir stale features |
+| `gradient_steps` | 4 | Mismo ratio datos/updates, mejor throughput |
+| `ent_coef` | 'auto' | SAC auto-tuna la entropía — no requiere bumps manuales |
+| `net_arch` | [128, 64] | ~27k params por red. Suficiente para 19D→4D |
+
+#### **Modificaciones al entorno (`panda3d_quadrotor_env.py`)**
+
+**Nuevos parámetros del constructor**:
+- `centroid_obs=False`: cuando True, la observación es Box(19,) flat en lugar de Dict con imágenes. La cámara sigue activa internamente para detección HSV pero no se incluye en la observación.
+- `camera_down=False`: cuando True, el target se coloca directamente debajo del dron a `hover_height` metros.
+- `hover_height=1.394`: distancia vertical calibrada drone→esfera.
+- `exclude_low_freq_camera=False`: elimina `camera_low_freq` del obs Dict (ahorra ~590 MB en el replay buffer cuando se usa CNN).
+- `store_transitions=True`: flag para que el SpiralSearchController desactive el almacenamiento en buffer durante la búsqueda.
+
+**Nuevo método `_detect_target_in_image()`**:
+Extrae el centroide y fracción de la imagen HSV en un solo pase. Retorna `(cx, cy, fraction, visible)` con valores normalizados:
+- `cx, cy ∈ [-1, 1]` (centro de imagen = 0)
+- `fraction ∈ [0, 1]`
+- `visible ∈ {0, 1}`
+- Cuando `visible=0`: cx=0, cy=0, **fraction=0** (señal unívoca — fraction=0 NUNCA ocurre con visible=1, ya que visible=1 requiere >2 píxeles → fraction > 0.002)
+
+**Nuevo método `_build_observation()` en modo centroid**:
+Concatena state(13-D) + [cx, cy, fraction, visible, delta_cx, delta_cy] = 19-D flat.
+- `delta_cx, delta_cy` incluidos desde la Fase 1 (=0 con target fijo) para mantener dimensionalidad constante entre fases y permitir transferencia de pesos seamless.
+
+**Nuevo método `_compute_hover_reward()`** — 3 componentes, rango [-1, +4]:
+
+| Componente | Rango | Fórmula |
+|---|---|---|
+| R_stability | 0 → +1.0 | `exp(-3·ω²) × exp(-3·tilt²)` |
+| R_centering | 0 → +2.0 | `2.0 × exp(-3·dist_center²)` |
+| R_scale | 0 → +1.0 | Gaussiana asimétrica (σ_far=0.12, σ_near=0.06) |
+| R_invisible | -1.0 | Fijo cuando target no visible |
+
+**Escenarios verificados numéricamente**:
+- Tracking perfecto: 4.00/step (stab=1.0, cent=2.0, scale=1.0)
+- Hover estable sin ver: 0.00/step (stab=1.0, invisible=-1.0)
+- Inestable sin ver: -0.78/step
+- Too close (frac=0.45): scale≈0.004 (gaussiana asimétrica castiga fuertemente)
+
+**Modo `camera_down`** en `_randomize_target()`:
+El target se coloca en `(drone_x, drone_y, drone_z - hover_height)` — directamente debajo del dron en el mismo eje vertical.
+
+**Reducción de la esfera target**: `setScale(target_radius)` en vez de `setScale(target_radius * 2)` — 50% más pequeña para mayor desafío de tracking.
+
+#### **SpiralSearchController (`src/agents/spiral_search_controller.py`)**
+
+Clase que gestiona la transición entre el tracking RL y la búsqueda en espiral. Carga el modelo de espiral pre-entrenado y opera como máquina de estados:
+
+**Estados**:
+- **TRACK**: target visible, RL policy controla. `store_transitions=True`.
+- **SEARCH**: target perdido durante K=20 steps consecutivos (0.2s). Modelo espiral controla. `store_transitions=False` (las acciones de la espiral NO entran al buffer de SAC).
+- **HANDOFF**: target re-adquirido tras búsqueda. Blending lineal de D=15 steps: `action = (1-α)·action_spiral + α·action_RL`, con α creciendo de 0 a 1. `store_transitions=True`.
+
+**Decisión de diseño — hover_height dinámico**: Al activar la espiral, `hover_height` se fija a la altitud actual del dron (no al valor calibrado hardcoded). Esto garantiza que si el dron pierde el target a z=2.5m, la espiral busca a esa altitud, no a 1.39m.
+
+**Replay buffer safety**: Las transiciones durante SEARCH no se almacenan. El critic de SAC intenta evaluar las acciones como si fueran del actor; inyectar acciones de otro controlador (espiral) confundiría al critic. Al re-detectar (HANDOFF), se retoma el almacenamiento para que SAC reciba experiencias de transición relevantes.
+
+#### **Script de entrenamiento (`scripts/train_hover_track.py`)**
+
+App Panda3D + SAC con:
+- Cámara FPV en `setPos(0, 0, -0.1)` / `setHpr(0, -90, 0)` (centrada, mirando abajo)
+- MlpPolicy en Box(19,) → eliminación total de CNN
+- `HoverTrackCallback`: logging CSV con 11 columnas, alerta si `mean(|action|) > 0.3` (detección temprana de acciones agresivas)
+- Init constrained: pos ±0.2m, vel ±0.1 m/s, ang ±0.05 rad
+- Interrupción segura: guarda modelo en `interrupted_model.zip`
+
+#### **Script de evaluación (`tests/test_hover_track.py`)**
+
+Evaluación con integración completa de la espiral:
+- Soporte para `--target-mode fixed/moving`, `--no-spiral`
+- Graba vídeo side-by-side (FPV + aerial)
+- Telemetría per-step con `controller_state` (track/search/handoff)
+- Métricas de acción (detección de agresividad)
+- JSON de resumen con métricas agregadas
+
+### Archivos Afectados
+
+#### Modificados:
+- `src/envs/panda3d_quadrotor_env.py` (+180 líneas): `centroid_obs`, `camera_down`, `hover_height`, `exclude_low_freq_camera`, `store_transitions`, `_detect_target_in_image()`, `_compute_hover_reward()`, `_build_observation()` actualizado para obs 19-D, observation space condicional (Box vs Dict).
+
+#### Nuevos:
+- `src/envs/spiral_follow_env.py` (~249 líneas): Entorno wrapper para espiral de Arquímedes con reward de 6 componentes.
+- `src/agents/spiral_search_controller.py` (~200 líneas): Máquina de estados TRACK/SEARCH/HANDOFF con modelo pre-entrenado.
+- `scripts/train_spiral_follow.py` (~502 líneas): Entrenamiento PPO de espiral con curriculum de 2 fases.
+- `scripts/train_hover_track.py` (~310 líneas): Entrenamiento SAC de hover tracking con centroid obs.
+- `tests/test_hover_track.py` (~290 líneas): Evaluación con integración de espiral.
+
+#### Datos generados:
+- `models/spiral_follow/best_model.zip`: Modelo de espiral PPO entrenado.
+- `models/spiral_follow/vecnormalize.pkl`: Estadísticas VecNormalize.
+- `models/spiral_follow/training_log.csv`: Métricas del entrenamiento de espiral.
+- `models/hover_track/best_model.zip`: Modelo SAC de hover tracking.
+- `models/hover_track/training_log.csv`: 509 episodios con 11 métricas.
+- `models/hover_track/training_summary.json`: Resumen del entrenamiento.
+
+### Resultados del Entrenamiento Hover-Track (200k steps SAC)
+
+| Métrica | Inicio (ep 1) | Final (ep 509) | Cambio |
+|---------|---------------|----------------|--------|
+| Reward total | 152 | 1,574 | **+10.3×** |
+| Visibilidad | 62% | 91% | **+30%** |
+| Centering dist | 0.43 | 0.27 | **-37%** |
+| r_stability | 0.59 | 0.99 | **Casi perfecto** |
+| r_centering | 0.73 | 1.44 | **+97%** |
+| r_scale | 0.49 | 0.80 | **+63%** |
+| Episode length | ~98 steps | 500 (máximo) | **Episodios completos** |
+| mean(\|action\|) | 0.51 | 0.42 | **-18% (control más eficiente)** |
+
+**Configuración final del entrenamiento**:
+
+| Parámetro | Valor |
+|---|---|
+| Algoritmo | SAC (auto entropy) |
+| Policy | MlpPolicy [128, 64] |
+| Parámetros | 56,908 |
+| Timesteps | 200,000 |
+| Episodios | 509 |
+| Tiempo | 25,643s (~7.1h) |
+| Buffer size | 300,000 |
+| Observación | 19-D flat (13 state + 6 centroid) |
+| Reward range | [-1.0, +4.0] |
+
+**Fases del aprendizaje**:
+- Ep 1–100: Exploración, reward bajo (mean 245)
+- Ep 100–150: Breakthrough — el agente descubre que centrar la esfera da reward alto
+- Ep 150–300: Consolidación, estabilidad crece a 0.98+
+- Ep 300–400: Visibilidad salta de 69% a 91% (el agente aprende a mantener la esfera en vista)
+- Ep 400–509: Rendimiento plateau alto (mean reward 1,392, episodios completos)
+
+### Análisis
+
+1. **SAC + MlpPolicy fue la elección correcta**: Con 57k parámetros y sin CNN, el modelo convergió en 200k steps (7h). El entrenamiento anterior con PPO + CNN necesitó 420k steps sin converger. La extracción de features manuales (centroide HSV) eliminó el bottleneck de aprendizaje de representaciones.
+
+2. **La cámara hacia abajo simplifica radicalmente el problema**: Con la cámara frontal, el target solo era visible ~2% del tiempo. Con la cámara vertical, el target es visible >90% del tiempo desde el inicio, proporcionando señal de reward densa y consistente.
+
+3. **El reward de 3 componentes es suficiente**: Frente a los 6 componentes de v2, el hover reward con solo stability + centering + scale produce convergencia más rápida. Los componentes eliminados (survival, discovery, not_visible) eran necesarios con cámara frontal pero redundantes con cámara vertical.
+
+4. **La estabilidad se aprende automáticamente**: r_stability alcanza 0.99 sin pre-entrenamiento. Con init constrained (near-hover) y SAC entropy, el agente descubre que acciones pequeñas producen mejor reward — no necesita un modelo previo de estabilización.
+
+5. **El modelo no ha convergido completamente**: La varianza en los últimos 50 episodios (std=284) sugiere que más timesteps (~100-200k adicionales) mejorarían centering y reducirían oscilaciones. El centering actual (0.27) está muy cerca del umbral objetivo (0.25).
+
+### Comparativa de Enfoques (v1 → v2 → v3)
+
+| Aspecto | v1 (Lemniscate PPO) | v2 (Lemniscate v2 PPO) | v3 (Hover-Track SAC) |
+|---|---|---|---|
+| Cámara | Frontal (H=0°) | Frontal (H=0°) | **Vertical (P=-90°)** |
+| Observación | Dict (13D + 32×32 RGB) | Dict (13D + 32×32 RGB) | **Box(19,) flat** |
+| Feature extractor | CNN (StateCameraExtractor) | CNN + transfer learning | **Sin CNN** (centroide HSV) |
+| Algoritmo | PPO | PPO | **SAC** |
+| Componentes reward | 1 (fracción) | 6 (multi-componente) | **3 (stability+centering+scale)** |
+| Buffer/memoria | N/A (on-policy) | N/A (on-policy) | **~21 MB** (replay 300k × 19D) |
+| Timesteps entrenados | 422k | ~6 episodios | **200k** |
+| Visibilidad final | 2.2% | N/A | **91%** |
+| Reward final | -265 | N/A | **+1,574** |
+| Convergencia | No | No | **Sí (parcial)** |
+| Parámetros | ~135k | ~135k | **57k** |
+
+### Siguientes Pasos
+
+1. **Extender entrenamiento actual** (+100-200k steps) para reducir varianza y mejorar centering a <0.25.
+2. **Evaluar con test completo** (vídeos + telemetría) para verificar comportamiento visual.
+3. **Probar target móvil lento** (0.05 m/s) sin reentrenar — test de generalización.
+4. **Integrar espiral** en evaluación para validar handoff TRACK→SEARCH→HANDOFF.
+5. **Fase 2 de curriculum**: Entrenar con target móvil (lemniscata lenta) manteniendo las mismas dimensiones de obs.
+6. **Fase 3**: Spawn off-axis (target no debajo del dron) + espiral para búsqueda inicial.
+
+---
+
+## Registro Completo de Entrenamientos y Tests Ejecutados
+
+Esta sección recopila todos los entrenamientos y tests realizados durante el proyecto con sus resultados detallados, para facilitar la redacción de la memoria del TFG.
+
+---
+
+### E1. Entrenamiento Depth Model (Estimación de Profundidad Monocular)
+
+**Fecha**: 2026-02-27 | **Tipo**: Supervisado (U-Net)
+**Script**: `scripts/train_depth_model.py`
+**Datos**: 5,000 pares RGB-Depth capturados con Panda3D activo (`scripts/collect_depth_realdata.py`)
+**Salida**: `models/depth_final/`
+
+| Parámetro | Valor |
+|---|---|
+| Arquitectura | LightweightUNet (~1.2M params) |
+| Entrada | RGB (3, 64, 64) uint8 |
+| Salida | Depth (1, 64, 64) float32 [0,1] |
+| Loss | L1 / MAE |
+| Optimizer | Adam |
+| Scheduler | ReduceLROnPlateau |
+| Epochs | 50 |
+| Best epoch | 20 |
+
+**Progresión del entrenamiento**:
+
+| Epoch | Train Loss | Val Loss | Val RMSE | AbsRel | δ1 |
+|---|---|---|---|---|---|
+| 1 | 0.1699 | 0.0730 | — | — | — |
+| 5 | 0.0526 | 0.0460 | — | — | — |
+| 10 | 0.0391 | 0.0399 | — | — | — |
+| **20** | **0.0263** | **0.0285** | **0.0655** | **0.262** | **0.919** |
+| 30 | 0.0240 | 0.0279 | — | — | — |
+| 50 | 0.0194 | 0.0267 | — | — | — |
+
+**Métricas finales (epoch 20, val set)**:
+- RMSE: 0.0655 m
+- AbsRel: 0.262 (26.2%)
+- δ1 (<1.25): 0.919 (91.9%)
+- δ2 (<1.25²): 0.962 (96.2%)
+- δ3 (<1.25³): 0.973 (97.3%)
+
+**Conclusión**: El 91.9% de las predicciones están dentro del factor 1.25× del ground truth. La U-Net ligera es suficiente para 64×64 px.
+
+---
+
+### E2. Comparativa RL: Baseline vs Depth-Augmented
+
+**Fecha**: 2026-02-28 | **Tipo**: RL (PPO)
+**Script**: `scripts/train_rl_comparison.py`
+**Salida**: `experiments/rl_comparison/`, `experiments/final_comparison/`
+
+| Parámetro | Baseline | Depth-Augmented |
+|---|---|---|
+| Política | MlpPolicy | MultiInputPolicy |
+| Observación | Estado 13D | Estado 13D + Depth 64×64 |
+| Parámetros | 10,441 | 106,985 |
+| Timesteps | 500,000 | 500,000 |
+| Entornos paralelos | 4 | 4 |
+| Seed | 42 | 42 |
+
+**Resultados finales**:
+
+| Métrica | Baseline | Depth | Ganador |
+|---|---|---|---|
+| Reward final | **-25.2** | -196.8 | Baseline (7.8×) |
+| Episode length | **1,000** (max) | 823 | Baseline |
+| Tasa de colisión | 62.3% | 61.8% | Similar |
+| Tiempo entrenamiento | **43 min** | 142 min | Baseline (3.3×) |
+
+**Progresión baseline (hitos)**:
+
+| Episodio | Timestep | Reward | Collision Rate |
+|---|---|---|---|
+| 10 | 1,056 | -366.6 | 100% |
+| 500 | 87,060 | -635.5 | 100% |
+| 800 | 338,192 | -287.1 | 74.8% |
+| **960** | **498,192** | **-25.2** | **62.3%** |
+
+**Conclusión**: Sin obstáculos visibles en el entorno RL, la profundidad no aporta ventaja. El baseline converge 3.3× más rápido con 10× menos parámetros.
+
+---
+
+### E3. Entrenamiento Goal Controller (Follow Mode)
+
+**Fecha**: 2026-03-02 → 2026-03-18 | **Tipo**: RL (PPO)
+**Scripts**: `scripts/train_goal_controller.py` (2 iteraciones)
+**Salida**: `models/goal_controller/`
+
+**Configuración final (Fase 7)**:
+
+| Parámetro | Valor |
+|---|---|
+| Algoritmo | PPO |
+| Observación | Estado 13D + Cámara RGB 32×32 |
+| Feature extractor | StateCameraExtractor (CNN 2 capas + MLP) |
+| Parámetros | 97,769 |
+| Timesteps | 500,000 |
+| FPS efectivo | ~18 fps |
+| Tiempo total | 24.96 horas |
+| Target mode | Moving (OU process) |
+| Speed curriculum | 0.05 → 0.3 m/s |
+
+**Progresión del entrenamiento (1,819 episodios)**:
+
+| Episodio | Timestep | Reward | Steps | Mean Distance | Visibilidad | Centering |
+|---|---|---|---|---|---|---|
+| 1 | 61 | -78.7 | 61 | 1.316 | 88.5% | 1.92 |
+| 100 | 7,822 | — | — | — | — | — |
+| 500 | ~135k | — | — | 2.5 | ~50% | ~1.5 |
+| 1,000 | ~275k | — | — | 2.0 | ~80% | ~2.0 |
+| 1,500 | ~410k | — | — | 1.7 | ~90% | ~2.2 |
+| **1,819** | **501,310** | **3,123** | **1,000** | **1.075** | **93.9%** | **2.31** |
+
+**Resumen de métricas finales**:
+- Reward medio final: 1,860.84
+- Distancia media al target: 1.849m
+- Los 1,819 episodios finales alcanzan 1,000 steps (100% estabilidad)
+
+---
+
+### T1. Test de Evaluación del Goal Controller (10 episodios grabados)
+
+**Fecha**: 2026-03-18 | **Tipo**: Evaluación
+**Script**: `scripts/record_10_tests.py`
+**Salida**: `experiments/recorded_tests/`
+**Modelo**: `models/goal_controller/best_model.zip`
+
+| Episodio | Steps | Mean Distance | Centering | Final Distance |
+|---|---|---|---|---|
+| 1 | 1,000 | 1.367 | 2.617 | 2.388 |
+| 2 | 1,000 | 1.370 | 2.597 | 2.410 |
+| 3 | 1,000 | 1.092 | 2.503 | 0.683 |
+| 4 | 1,000 | 1.052 | 2.623 | 0.913 |
+| 5 | 1,000 | 1.001 | 2.312 | 0.306 |
+| 6 | 1,000 | 1.342 | 2.619 | 0.761 |
+| 7 | 1,000 | 1.014 | 2.501 | 0.908 |
+| 8 | 1,000 | 1.561 | 2.626 | 1.757 |
+| 9 | 1,000 | 1.495 | 2.586 | 1.289 |
+| 10 | 1,000 | 1.487 | 2.445 | 1.880 |
+| **Media** | **1,000** | **1.278** | **2.543** | **1.330** |
+
+**Telemetría**: 10,001 filas con posición, distancia, visibilidad, centering, scale, target_fraction.
+**Vídeos**: 10 MP4 side-by-side (FPV + aerial).
+**Gráficas**: reward, distance, visual_quality, safety.
+
+---
+
+### T2. Test de Seguimiento en Lemniscata
+
+**Fecha**: 2026-03-21 | **Tipo**: Evaluación
+**Script**: `tests/test_lemniscate_follow.py`
+**Salida**: `experiments/lemniscate_follow/`
+**Modelo**: `models/goal_controller/best_model.zip`
+**Config**: Escala=5.0m, velocidad=0.3 m/s, 3 episodios × 2,000 steps
+
+| Episodio | Steps | Reward Total | Mean Distance | Mean Centering | Final Distance |
+|---|---|---|---|---|---|
+| 1 | 2,000 | 4,062.5 | 3.080 | 1.643 | 1.044 |
+| 2 | 2,000 | 3,846.8 | 3.168 | 1.594 | 2.104 |
+| 3 | 2,000 | 3,642.0 | 3.091 | 1.592 | 4.492 |
+| **Media** | **2,000** | **3,850.4** | **3.113** | **1.610** | **2.547** |
+
+**Observaciones**: El modelo de goal controller mantiene visibilidad pero no puede seguir la lemniscata activamente — la distancia media de 3.1m es alta. Esto motivó el rediseño de la función de reward.
+
+---
+
+### E4. Entrenamiento Lemniscate Follower (v1)
+
+**Fecha**: 2026-03-21 → 2026-03-27 | **Tipo**: RL (PPO)
+**Script**: `scripts/train_lemniscate_follower.py`
+**Salida**: `models/lemniscate_follower/`
+
+| Parámetro | Valor |
+|---|---|
+| Algoritmo | PPO |
+| Observación | Dict (13D + 32×32 RGB) |
+| Feature extractor | StateCameraExtractor |
+| Parámetros | ~135,000 |
+| Timesteps | 570,957 |
+| Episodios | 35,392 |
+| Reward ideal_fraction | 0.25, tolerance 0.05, max 1000 |
+| Speed curriculum | 0.05 → 0.192 m/s |
+
+**Progresión**:
+
+| Episodio | Timestep | Reward | Steps | Visibility | Target Speed |
+|---|---|---|---|---|---|
+| 1 | 61 | -505.0 | 61 | 0.0% | 0.050 |
+| 1,000 | ~45k | -400 | ~14 | 0.0% | 0.06 |
+| 10,000 | ~230k | -426 | ~14 | 0.0% | 0.107 |
+| 10,059 | ~232k | **5,318** | 14 | 78.6% | 0.107 |
+| 24,000 | ~420k | -311 | ~14 | 0.0% | 0.155 |
+| **35,392** | **570,957** | **-265** | **13** | **0.0%** | **0.192** |
+
+**Estadísticas clave**:
+- Episodios con visibilidad >50%: 529 / 35,392 (1.5%)
+- Episodios con reward positivo: 10 / 35,392 (0.03%)
+- Mejor episodio: 5,318 (ep. 10,059, visibilidad 78.6%)
+- Episode length medio: 14 steps (de 1,000 máx)
+
+**Conclusión**: El agente se estancó en un óptimo local. Con la cámara frontal, la esfera era invisible >98% del tiempo. El agente aprendió a reducir penalizaciones (de -505 a -265) pero nunca aprendió a localizar consistentemente el target. Este resultado motivó el cambio completo de estrategia (cámara vertical + SAC).
+
+---
+
+### E5. Entrenamiento Lemniscate v2 (Curriculum Adaptativo)
+
+**Fecha**: 2026-03-27 → 2026-03-30 | **Tipo**: RL (PPO)
+**Script**: `scripts/train_lemniscate_v2.py`
+**Salida**: `models/lemniscate_v2/`
+
+| Parámetro | Valor |
+|---|---|
+| Algoritmo | PPO |
+| Observación | Dict (13D + 32×32 RGB) |
+| Feature extractor | StateCameraExtractor (transfer learning) |
+| Transfer from | models/goal_controller/best_model.zip |
+| CNN freeze | Fase A (descongelado en Fase B con lr=1e-5) |
+| Reward | v2 (6 componentes) |
+| VecNormalize | Sí |
+| Timesteps | 604,000 |
+| Episodios | 724 |
+
+**Curriculum de 3 fases**:
+- Fase A (0–30%): Target fijo a 2.0m, speed=0
+- Fase B (30–70%): Lemniscata, speed 0.02→0.16 m/s
+- Fase C (70–100%): Lemniscata, speed 0.16→0.30 m/s
+
+**Progresión**:
+
+| Episodio | Timestep | Reward | Steps | Distance | Visibility | Phase | Speed |
+|---|---|---|---|---|---|---|---|
+| 1 | 1,000 | 62.09 | 1,000 | 3.17 | 0.0% | A | 0.0 |
+| 2 | 2,000 | 35.63 | 1,000 | 2.811 | 22.5% | A | 0.0 |
+| 100 | 101,000 | ~30 | 1,000 | ~2.6 | ~15% | A | 0.0 |
+| 400 | 350,000 | ~25 | 1,000 | ~2.5 | ~10% | B | 0.08 |
+| 720 | 600,000 | 24.54 | 1,000 | 2.568 | 15.9% | B | 0.124 |
+| **724** | **604,000** | **24.66** | **1,000** | **2.712** | **19.5%** | **B** | **0.126** |
+
+**Observaciones**: El entrenamiento fue interrumpido. A pesar de alcanzar episodios de 1,000 steps (dron estable), el agente no mejoró significativamente en visibilidad (~15-20%) ni en distancia (~2.5-2.7m). El transfer learning del goal controller proporcionó estabilidad de vuelo pero no tradujo en seguimiento visual efectivo con la cámara frontal.
+
+---
+
+### T3. Test de Calibración de Altitud
+
+**Fecha**: 2026-03-30 | **Tipo**: Calibración
+**Script**: `tests/test_altitude_calibration.py`
+**Salida**: `experiments/altitude_calibration/`
+
+**Metodología**: Barrido de altitudes 0.5–3.0m con esfera magenta debajo del dron, captura a 32×32 y 128×128 px, medición de fracción HSV.
+
+**Resultados**:
+
+| Método | Altura óptima (m) | Error vs empírico |
+|---|---|---|
+| Teórico (pinhole, buffer) | 1.498 | +7.5% |
+| Teórico (film nativo 3:2) | 1.380 | -1.0% |
+| **Empírico 32×32 px** | **1.394** | **referencia** |
+| Empírico 128×128 px | 1.388 | -0.4% |
+
+**Artefactos**: `altitude_vs_fraction.png` (curva), `calibration_result.txt`, 5 imágenes de muestra a distintas altitudes.
+
+**Decisión**: Se adopta **1.394m** como hover_height — medido a la misma resolución (32×32) que el pipeline de reward.
+
+---
+
+### T4. Test de Búsqueda en Espiral (SpiralSearchController determinista)
+
+**Fecha**: 2026-03-30 | **Tipo**: Calibración + Validación
+**Script**: `tests/test_spiral_search.py`
+**Salida**: `experiments/spiral_search/`
+
+**3 fases de test**:
+
+**Phase 1 — Parameter Sweep** (ω × r_growth, 9 combinaciones):
+
+| ω \ r_growth | 0.12 | 0.15 | 0.18 |
+|---|---|---|---|
+| 1.2 | 4.75s | 4.86s | 4.95s |
+| 1.5 | 3.92s | 3.95s | 3.98s |
+| **1.8** | **3.33s** | **3.34s** | **3.37s** |
+
+**Resultado**: 9/9 combinaciones exitosas. Mejor tiempo: ω=1.8, r_growth=0.12.
+
+**Phase 2 — Cobertura Angular** (8 ángulos × 5 distancias):
+
+| Distancia | Tasa detección | Tiempo medio | Peor caso |
+|---|---|---|---|
+| 0.5m | 8/8 (100%) | 1 step | 1 step |
+| 1.0m | 8/8 (100%) | 0.24s | 4.35s |
+| 1.5m | 8/8 (100%) | 0.43s | 6.78s |
+| 2.0m | 8/8 (100%) | 0.74s | 10.66s |
+| 2.5m | 8/8 (100%) | 1.12s | 14.32s |
+
+**Resultado**: **40/40 detecciones (100%)** con cobertura angular uniforme.
+
+**Phase 3 — Handoff**: Desplazamiento al detectar = 0.95m. Transición suave validada.
+
+**Parámetros finales adoptados**:
+- ω_orbit = 1.5 rad/s (adaptativo)
+- r_growth = 0.15 m/s
+- max_tilt = 0.25 rad (14.3°)
+- K (invisible threshold) = 20 steps (0.2s)
+- D (handoff blending) = 15 steps
+
+---
+
+### E6. Entrenamiento Spiral Follow (Modelo RL de Espiral)
+
+**Fecha**: 2026-04-01 | **Tipo**: RL (PPO)
+**Script**: `scripts/train_spiral_follow.py`
+**Salida**: `models/spiral_follow/`
+
+| Parámetro | Valor |
+|---|---|
+| Algoritmo | PPO |
+| Observación | 18-D flat (13 estado + 5 referencia espiral) |
+| Política | MlpPolicy [64, 32] |
+| Parámetros | 6,761 (menor red del proyecto) |
+| Timesteps | 500,000 |
+| Episodios | 611 |
+| Tiempo | 35,827s (~9.95h) |
+| hover_height | 1.39m |
+| ω_base | 1.8 rad/s |
+| r_growth | 0.12 m/s |
+| Curriculum | 2 fases (ω_scale 0.3→1.0) |
+
+**Progresión**:
+
+| Episodio | Timestep | Reward | Steps | Pos Error | Alt Error | ω_scale | Phase |
+|---|---|---|---|---|---|---|---|
+| 1 | 62 | 22.5 | 62 | 0.222 | 1.414 | 0.30 | A |
+| 2 | 266 | 4.71 | 204 | 1.420 | 2.287 | 0.30 | A |
+| 50 | ~25k | ~30 | ~1,000 | ~0.15 | ~0.5 | 0.40 | A |
+| 200 | ~100k | ~50 | ~1,500 | ~0.10 | ~0.15 | 0.55 | A |
+| 400 | ~250k | ~65 | 2,000 | ~0.08 | ~0.10 | 0.80 | B |
+| 600 | ~492k | 74.85 | 2,000 | 0.067 | 0.096 | 0.99 | B |
+| **611** | **500,428** | **73.97** | **2,000** | **0.070** | **0.093** | **1.00** | **B** |
+
+**Métricas finales**:
+- Reward medio final (window 50): 9,039.59
+- Error de posición: **0.070m** (7cm de la referencia de espiral)
+- Error de altitud: **0.093m** (9cm del hover_height)
+- Todos los episodios finales alcanzan 2,000 steps (20s)
+
+**Componentes de reward (últimos episodios)**:
+
+| Componente | Valor medio |
+|---|---|
+| r_tracking | 1.86 / 2.0 |
+| r_velocity | 0.82 / 1.0 |
+| r_altitude | 0.97 / 1.0 |
+| r_stability | 0.95 / 1.0 |
+| r_progress | 0.10 / 0.1 |
+| r_off_track | 0.00 / 0.0 |
+
+**Conclusión**: El modelo más compacto del proyecto (6,761 params) logra el mejor rendimiento relativo. Sigue la espiral con error <7cm a velocidad completa (ω_scale=1.0). Se usa como fallback en el SpiralSearchController.
+
+---
+
+### E7. Entrenamiento Hover Track (SAC + Centroid Obs)
+
+**Fecha**: 2026-04-01 → 2026-04-02 | **Tipo**: RL (SAC)
+**Script**: `scripts/train_hover_track.py`
+**Salida**: `models/hover_track/`
+
+| Parámetro | Valor |
+|---|---|
+| Algoritmo | SAC (auto entropy) |
+| Observación | 19-D flat (13 estado + 6 centroide) |
+| Política | MlpPolicy [128, 64] |
+| Parámetros | 56,908 |
+| Timesteps | 200,000 |
+| Episodios | 509 |
+| Tiempo | 25,643s (~7.12h) |
+| hover_height | 1.394m |
+| Cámara | Vertical (pitch=-90°) |
+| buffer_size | 300,000 |
+| learning_starts | 5,000 |
+| gamma | 0.995 |
+| train_freq | 4 |
+| gradient_steps | 4 |
+
+**Progresión detallada**:
+
+| Episodio | Timestep | Reward | Steps | Visibilidad | Centering | Fraction | \|action\| | r_stab | r_cent | r_scale |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 113 | 152.3 | 113 | 61.9% | 0.428 | 0.239 | 0.511 | 0.591 | 0.731 | 0.495 |
+| 10 | 1,290 | -33.4 | 68 | 55.9% | 0.594 | 0.194 | 0.504 | 0.386 | 0.550 | 0.275 |
+| 50 | 7,800 | 120.7 | 111 | 74.8% | 0.574 | 0.206 | 0.563 | 0.589 | 0.666 | 0.379 |
+| 100 | 49,000 | 400.7 | 281 | 70.7% | 0.461 | 0.188 | 0.627 | 0.839 | 0.766 | 0.458 |
+| 150 | 72,000 | 939.3 | 500 | 74.4% | 0.311 | 0.230 | 0.528 | 0.892 | 1.015 | 0.741 |
+| 200 | 96,000 | 1,097.3 | 500 | 69.4% | 0.323 | 0.218 | 0.473 | 0.903 | 1.048 | 0.715 |
+| 300 | 147,000 | 1,577.9 | 500 | 100% | 0.360 | 0.202 | 0.404 | 0.985 | 1.322 | 0.848 |
+| 400 | 195,000 | 1,901.9 | 500 | 100% | 0.108 | 0.244 | 0.402 | 0.987 | 1.505 | 0.828 |
+| 450 | 197,000 | 1,830.5 | 500 | 93.8% | 0.247 | 0.220 | 0.400 | 0.970 | 1.280 | 0.785 |
+| 499 | 199,000 | **1,957.9** | 500 | 100% | 0.073 | 0.247 | 0.378 | 0.993 | 1.577 | 0.862 |
+| **509** | **199,626** | **1,574.3** | **500** | **91.4%** | **0.267** | **0.201** | **0.419** | **0.992** | **1.443** | **0.800** |
+
+**Fases de aprendizaje identificadas**:
+- **Ep 1–50**: Exploración (reward 50–200, episodes 60–130 steps)
+- **Ep 50–150**: Breakthrough (reward salta a 900+, episodios completos)
+- **Ep 150–300**: Consolidación (r_stability 0.89→0.99, visibilidad 70%→100%)
+- **Ep 300–400**: Visibilidad alta sostenida (90%+), centering mejora
+- **Ep 400–509**: Plateau alto (reward 1,500–1,958, centering 0.07–0.40)
+
+**Pico de rendimiento** (ep 499): Reward 1,957.9, visibilidad 100%, centering 0.073, fraction 0.247 (ideal 0.25).
+
+**Conclusión**: Primer modelo que converge exitosamente para seguimiento visual. SAC + obs centroide + cámara vertical resuelven los problemas de los intentos anteriores.
+
+---
+
+### T5. Test de Validación de Spawn (Posiciones Iniciales)
+
+**Fecha**: 2026-03-27 | **Tipo**: Validación visual
+**Script**: `tests/test_spawn_positions.py`
+**Salida**: `experiments/spawn_test/`
+
+**Configuración**: 10 inicializaciones aleatorias con target fijo a 2.0m del dron.
+
+**Resultado**: Las 10 configuraciones muestran distancia exacta de 2.0m entre dron y target en el mismo plano horizontal. Generados:
+- `spawn_positions.mp4`: Vídeo aéreo de las 10 configuraciones (3 seg/cada una)
+- `spawn_summary.png`: Gráfica cenital con posiciones drone-target
+
+---
+
+### T6. Test de Trayectoria Lemniscata (sin dron)
+
+**Fecha**: 2026-03-21 | **Tipo**: Visualización
+**Script**: `tests/test_lemniscate_trajectory.py`
+**Salida**: `experiments/lemniscate_test/`
+
+**Configuración**: Visualización de la trayectoria en ∞ sin dron activo, escala 2.5m, velocidad 0.25.
+
+**Artefactos**:
+- `lemniscate_trajectory.png`: Plot de la curva paramétrica x(t), y(t)
+- `lemniscate_bird.mp4`: Vídeo aéreo (800×600) de la esfera recorriendo la trayectoria
+
+---
+
+### Resumen Comparativo de Todos los Entrenamientos
+
+| ID | Modelo | Algoritmo | Params | Steps | Tiempo | Reward Final | Convergió |
+|---|---|---|---|---|---|---|---|
+| E1 | Depth U-Net | Supervisado | 1.2M | 50 epochs | ~1h | δ1=0.919 | ✅ |
+| E2a | RL Baseline | PPO | 10,441 | 500k | 43 min | -25.2 | ✅ |
+| E2b | RL Depth | PPO | 106,985 | 500k | 142 min | -196.8 | ❌ (parcial) |
+| E3 | Goal Controller | PPO | 97,769 | 500k | 24.96h | +1,861 | ✅ |
+| E4 | Lemniscate v1 | PPO | ~135k | 571k | ~158h | -265 | ❌ |
+| E5 | Lemniscate v2 | PPO | ~135k | 604k | ~168h | +24.7 | ❌ (interrumpido) |
+| E6 | Spiral Follow | PPO | 6,761 | 500k | 9.95h | +9,040 | ✅ |
+| E7 | Hover Track | SAC | 56,908 | 200k | 7.12h | +1,743 | ✅ (parcial) |
+
+### Tiempo Total de Entrenamiento del Proyecto
+
+| Fase | Tiempo |
+|---|---|
+| Depth model (supervisado) | ~1h |
+| Comparativa RL (baseline + depth) × 2 | ~6h |
+| Goal controller (2 iteraciones) | ~33h |
+| Lemniscate follower v1 | ~158h |
+| Lemniscate v2 | ~168h |
+| Spiral follow | ~10h |
+| Hover track | ~7h |
+| **Total aproximado** | **~383 horas** |
+
+---
+

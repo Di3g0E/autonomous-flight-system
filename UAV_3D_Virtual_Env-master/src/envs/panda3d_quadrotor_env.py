@@ -5,12 +5,14 @@ This module provides a wrapper that integrates the pure physics-based quadrotor
 environment with Panda3D's 3D visualization and collision detection capabilities.
 """
 
+import math
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 import cv2
 from src.envs.quadrotor_env import quad
 from src.envs.collision_detector import CollisionDetector, ObstacleManager
+from src.simulation.quaternion_euler_utility import euler_quat
 
 
 class Panda3DQuadrotorEnv(gym.Env):
@@ -68,6 +70,18 @@ class Panda3DQuadrotorEnv(gym.Env):
         fraction_tolerance=0.05,
         max_visual_reward=1000.0,
         min_start_distance=3.0,
+        # ── v2 reward & init parameters ──
+        use_new_reward=False,
+        initial_target_distance=2.0,
+        constrained_init=False,
+        init_pos_range=0.5,
+        init_vel_range=0.25,
+        init_ang_range=0.1,
+        # ── v3 centroid-obs mode ──
+        centroid_obs=False,
+        hover_height=1.394,
+        camera_down=False,
+        exclude_low_freq_camera=False,
     ):
         """
         Initialize the Panda3D Quadrotor Environment.
@@ -128,6 +142,10 @@ class Panda3DQuadrotorEnv(gym.Env):
         # Depth settings
         self.use_depth = use_depth and use_camera  # Depth requires camera to be enabled
         self.depth_metric = depth_metric
+
+        # Early v3 flags (needed before obs space config below)
+        self.centroid_obs = centroid_obs
+        self.exclude_low_freq_camera = exclude_low_freq_camera
         
         # Camera state
         self._step_counter = 0
@@ -167,7 +185,7 @@ class Panda3DQuadrotorEnv(gym.Env):
         self.action_space = self.base_env.action_space
         
         # Configure observation space based on camera and depth usage
-        if self.use_camera:
+        if self.use_camera and not self.centroid_obs:
             obs_dict = {
                 "state": self.base_env.observation_space,
                 "camera_high_freq": spaces.Box(
@@ -175,13 +193,15 @@ class Panda3DQuadrotorEnv(gym.Env):
                     shape=(*camera_high_freq_size[::-1], 3),
                     dtype=np.uint8
                 ),
-                "camera_low_freq": spaces.Box(
+            }
+
+            if not self.exclude_low_freq_camera:
+                obs_dict["camera_low_freq"] = spaces.Box(
                     low=0, high=255,
                     shape=(*camera_low_freq_size[::-1], 3),
                     dtype=np.uint8
                 )
-            }
-            
+
             # Add depth to observation space if enabled
             if self.use_depth:
                 obs_dict["depth_high_freq"] = spaces.Box(
@@ -189,12 +209,13 @@ class Panda3DQuadrotorEnv(gym.Env):
                     shape=(*camera_high_freq_size[::-1], 1),
                     dtype=np.float32
                 )
-                obs_dict["depth_low_freq"] = spaces.Box(
-                    low=0, high=np.inf,
-                    shape=(*camera_low_freq_size[::-1], 1),
-                    dtype=np.float32
-                )
-            
+                if not self.exclude_low_freq_camera:
+                    obs_dict["depth_low_freq"] = spaces.Box(
+                        low=0, high=np.inf,
+                        shape=(*camera_low_freq_size[::-1], 1),
+                        dtype=np.float32
+                    )
+
             self.observation_space = spaces.Dict(obs_dict)
         else:
             # Backward compatibility: simple Box observation
@@ -239,7 +260,33 @@ class Panda3DQuadrotorEnv(gym.Env):
         self.fraction_tolerance = fraction_tolerance
         self.max_visual_reward = max_visual_reward
         self.min_start_distance = min_start_distance
-        
+
+        # ── v2 reward & init ──
+        self.use_new_reward = use_new_reward
+        self.initial_target_distance = initial_target_distance
+        self.constrained_init = constrained_init
+        self.init_pos_range = init_pos_range
+        self.init_vel_range = init_vel_range
+        self.init_ang_range = init_ang_range
+        self._target_visible_last_step = False  # for discovery bonus
+
+        # ── v3 centroid-obs mode ──
+        self.hover_height = hover_height
+        self.camera_down = camera_down
+        self._prev_centroid = np.zeros(2, dtype=np.float32)
+        self.store_transitions = True  # spiral controller sets False
+
+        if self.centroid_obs:
+            # 19-D flat: 13 state + cx, cy, frac, vis, dcx, dcy
+            low = np.array(
+                [-5, -10, -5, -10, -5, -10, -1, -1, -1, -1, -10, -10, -10,
+                 -1, -1, 0, 0, -2, -2], dtype=np.float32)
+            high = np.array(
+                [5, 10, 5, 10, 5, 10, 1, 1, 1, 1, 10, 10, 10,
+                 1, 1, 1, 1, 2, 2], dtype=np.float32)
+            self.observation_space = spaces.Box(low=low, high=high,
+                                                dtype=np.float32)
+
         # Create target marker if in target mode and Panda3D is available
         if self.use_target and self.panda3d_app is not None:
             self._create_target_marker()
@@ -260,7 +307,7 @@ class Panda3DQuadrotorEnv(gym.Env):
         if sphere is not None:
             self._target_node = sphere
             self._target_node.reparentTo(self.render_node)
-            self._target_node.setScale(self.target_radius * 2)
+            self._target_node.setScale(self.target_radius)
 
             # Magenta self-illuminating material (H≈150 in HSV).
             # Magenta does not exist in any scene texture (brick, wood,
@@ -321,13 +368,26 @@ class Panda3DQuadrotorEnv(gym.Env):
                 if dist >= self.min_start_distance:
                     break
 
-            # Fixed height (same as drone's initial altitude = 0)
-            self.target_pos = np.array([x, y, 0.0])
+            # Height: below drone when camera_down, ground level otherwise
+            target_z = drone_pos[2] - self.hover_height if self.camera_down else 0.0
+            self.target_pos = np.array([x, y, target_z])
+
+        elif self.camera_down:
+            # Target directly below drone at hover_height distance
+            self.target_pos = np.array([
+                drone_pos[0],
+                drone_pos[1],
+                drone_pos[2] - self.hover_height,
+            ])
+            self.target_pos = np.clip(self.target_pos, -3.0, 3.0)
 
         else:
-            # Random angle in full circle and random distance
+            # Random angle in full circle; fixed or random distance
             angle = np.random.uniform(0, 2 * np.pi)
-            distance = np.random.uniform(1.0, self.target_range)
+            if self.use_new_reward:
+                distance = self.initial_target_distance
+            else:
+                distance = np.random.uniform(1.0, self.target_range)
 
             self.target_pos = np.array([
                 drone_pos[0] + distance * np.cos(angle),
@@ -405,7 +465,8 @@ class Panda3DQuadrotorEnv(gym.Env):
             x, y = self._lemniscate_point(t)
             self.target_pos[0] = x
             self.target_pos[1] = y
-            # Height stays fixed at 0.0 (set in _randomize_target)
+            if self.camera_down:
+                self.target_pos[2] = drone_pos[2] - self.hover_height
 
             if not self.filming_mode:
                 self.base_env.set_target(self.target_pos)
@@ -499,7 +560,196 @@ class Panda3DQuadrotorEnv(gym.Env):
             reward = -5.0
 
         return reward, info
-    
+
+    # ================================================================= #
+    #  v2 multi-component reward                                        #
+    # ================================================================= #
+
+    def _compute_new_reward(self):
+        """Multi-component dense reward for visual target tracking.
+
+        Components
+        ----------
+        R_survival   +0.05       always (stay alive incentive)
+        R_stability  0 … +1.0   low angular velocity × low tilt
+        R_centering  0 … +3.0   target centroid close to image centre
+        R_scale      0 … +2.0   target fraction close to ideal (asymmetric σ)
+        R_discovery  +3.0       each time target reappears after being lost
+        R_not_visible -0.5      per step without seeing the target
+
+        Returns
+        -------
+        total_reward : float
+        info : dict   (component breakdown for logging)
+        """
+        info = {}
+
+        # ── State-based components (always active) ────────────────────
+        state = self.base_env.state
+        ang = self.base_env.ang  # [roll, pitch, yaw]
+
+        # R_survival
+        r_survival = 0.05
+
+        # R_stability — two separate Gaussians (don't mix units)
+        ang_vel_norm = np.linalg.norm(state[10:13]) / 10.0   # normalised by BB_VEL
+        tilt_norm = (abs(ang[0]) + abs(ang[1])) / (np.pi / 2) # normalised by BB_ANG
+        r_stability = math.exp(-3.0 * ang_vel_norm ** 2) * math.exp(-3.0 * tilt_norm ** 2)
+
+        # ── Visual detection ─────────────────────────────────────────
+        img = self._last_high_freq_image
+        r_centering = 0.0
+        r_scale = 0.0
+        r_discovery = 0.0
+        r_not_visible = 0.0
+        target_visible = False
+
+        if img is not None:
+            h, w = img.shape[:2]
+            img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+            mask = cv2.inRange(hsv, (140, 100, 100), (170, 255, 255))
+
+            pixel_count = int(np.sum(mask > 0))
+            total_pixels = h * w
+            target_visible = pixel_count > 2
+
+            info['target_visible'] = target_visible
+            info['target_pixels'] = pixel_count
+
+            if target_visible:
+                self._target_ever_seen = True
+
+                # ── Discovery bonus (repeatable) ──
+                if not self._target_visible_last_step:
+                    r_discovery = 3.0
+
+                # ── Centroid & centering reward ──
+                ys, xs = np.where(mask > 0)
+                cx, cy = float(np.mean(xs)), float(np.mean(ys))
+                cx_norm = (cx - w / 2) / (w / 2)   # [-1, 1]
+                cy_norm = (cy - h / 2) / (h / 2)   # [-1, 1]
+                dist_from_center = math.sqrt(cx_norm ** 2 + cy_norm ** 2)  # [0, √2]
+                r_centering = 3.0 * math.exp(-3.0 * dist_from_center ** 2)
+
+                # ── Scale reward (asymmetric Gaussian + proximity penalty) ──
+                # Gaussian peak at ideal_fraction (0.25 by default).
+                # σ_far  = 0.12  → gentle slope when too far (fraction < ideal)
+                # σ_near = 0.06  → steep slope when too close (fraction > ideal)
+                # This encourages keeping a safe distance: approaching too
+                # close is punished ~4× faster than drifting too far.
+                #
+                # Additionally, fractions above 0.40 receive a linear penalty
+                # (-2.0 per 0.10 excess) to actively discourage collision-risk
+                # proximity.  The penalty is clamped at -2.0.
+                target_fraction = pixel_count / total_pixels
+                fraction_error = target_fraction - self.ideal_fraction
+                abs_error = abs(fraction_error)
+                sigma = 0.12 if fraction_error <= 0 else 0.06
+                r_scale = 2.0 * math.exp(-0.5 * (abs_error / sigma) ** 2)
+
+                # Proximity penalty: linear ramp beyond 0.40
+                proximity_threshold = 0.40
+                if target_fraction > proximity_threshold:
+                    excess = target_fraction - proximity_threshold
+                    r_scale -= min(2.0, 20.0 * excess)  # -2.0 per 0.10 excess
+
+                info['target_fraction'] = float(target_fraction)
+                info['fraction_error'] = float(fraction_error)
+                info['target_center'] = (cx, cy)
+                info['centering_dist'] = float(dist_from_center)
+            else:
+                r_not_visible = -0.5
+
+        # Update visibility flag for next step's discovery check
+        self._target_visible_last_step = target_visible
+
+        # ── Total ─────────────────────────────────────────────────────
+        total = r_survival + r_stability + r_centering + r_scale + r_discovery + r_not_visible
+
+        info['r_survival'] = r_survival
+        info['r_stability'] = float(r_stability)
+        info['r_centering'] = float(r_centering)
+        info['r_scale'] = float(r_scale)
+        info['r_discovery'] = float(r_discovery)
+        info['r_not_visible'] = float(r_not_visible)
+        info['scale_reward'] = float(r_scale)             # compat with recorder
+        info['centering_reward'] = float(r_centering)     # compat with recorder
+
+        return float(total), info
+
+    # ================================================================= #
+    #  v3 hover-tracking reward (3 components, clean)                   #
+    # ================================================================= #
+
+    def _compute_hover_reward(self):
+        """Simplified 3-component reward for hover-tracking with centroid obs.
+
+        Components (when target visible)
+        ---------------------------------
+        R_stability   0 → +1.0   low angular velocity × low tilt
+        R_centering   0 → +2.0   target centroid close to image centre
+        R_scale       0 → +1.0   target fraction near ideal (0.25)
+
+        When target NOT visible
+        -----------------------
+        R_stability   0 → +1.0   (always active)
+        R_invisible   −1.0       fixed penalty per step
+
+        Total range: −1.0 (invisible, unstable) to +4.0 (perfect tracking)
+
+        Returns
+        -------
+        total_reward : float
+        info : dict
+        """
+        info = {}
+        state = self.base_env.state
+        ang = self.base_env.ang  # [roll, pitch, yaw]
+
+        # R_stability — always active
+        ang_vel_norm = np.linalg.norm(state[10:13]) / 10.0
+        tilt_norm = (abs(ang[0]) + abs(ang[1])) / (np.pi / 2)
+        r_stability = math.exp(-3.0 * ang_vel_norm ** 2) * math.exp(-3.0 * tilt_norm ** 2)
+
+        # Detect target (reuse centroid already computed for observation)
+        cx, cy, frac, vis = self._detect_target_in_image()
+
+        r_centering = 0.0
+        r_scale = 0.0
+        r_invisible = 0.0
+        target_visible = vis > 0
+
+        if target_visible:
+            self._target_ever_seen = True
+
+            # R_centering — Gaussian on distance from image centre
+            dist_from_center = math.sqrt(cx ** 2 + cy ** 2)  # [0, √2]
+            r_centering = 2.0 * math.exp(-3.0 * dist_from_center ** 2)
+
+            # R_scale — asymmetric Gaussian (tight above ideal, loose below)
+            fraction_error = abs(frac - self.ideal_fraction)
+            sigma = 0.12 if frac <= self.ideal_fraction else 0.06
+            r_scale = 1.0 * math.exp(-0.5 * (fraction_error / sigma) ** 2)
+
+            info['target_fraction'] = float(frac)
+            info['fraction_error'] = float(fraction_error)
+            info['target_center'] = (cx, cy)
+            info['centering_dist'] = float(dist_from_center)
+        else:
+            r_invisible = -1.0
+
+        info['target_visible'] = target_visible
+        info['r_stability'] = float(r_stability)
+        info['r_centering'] = float(r_centering)
+        info['r_scale'] = float(r_scale)
+        info['r_invisible'] = float(r_invisible)
+        info['scale_reward'] = float(r_scale)
+        info['centering_reward'] = float(r_centering)
+
+        total = r_stability + r_centering + r_scale + r_invisible
+        return float(total), info
+
     def _setup_collision_system(self):
         """Setup the collision detection system."""
         if self.quad_model is None or self.render_node is None:
@@ -657,32 +907,78 @@ class Panda3DQuadrotorEnv(gym.Env):
         return captured_any
 
     
+    def _detect_target_in_image(self):
+        """Detect magenta target in the high-freq camera image via HSV.
+
+        Returns
+        -------
+        cx, cy : float  centroid in [-1, 1] (normalised image coords)
+        frac   : float  fraction of image occupied [0, 1]
+        vis    : float  1.0 if visible, 0.0 otherwise
+        """
+        img = self._last_high_freq_image
+        if img is None:
+            return 0.0, 0.0, 0.0, 0.0
+
+        h, w = img.shape[:2]
+        img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, (140, 100, 100), (170, 255, 255))
+
+        pixel_count = int(np.sum(mask > 0))
+        total_pixels = h * w
+
+        if pixel_count <= 2:
+            # Invisible: fraction=0 NEVER occurs with visible=1 → unambiguous
+            return 0.0, 0.0, 0.0, 0.0
+
+        ys, xs = np.where(mask > 0)
+        cx = float(np.mean(xs))
+        cy = float(np.mean(ys))
+        # Normalise to [-1, 1] (centre of image = 0)
+        cx_norm = (cx - w / 2) / (w / 2)
+        cy_norm = (cy - h / 2) / (h / 2)
+        frac = pixel_count / total_pixels
+        return cx_norm, cy_norm, frac, 1.0
+
     def _build_observation(self, state):
         """
         Build observation according to configuration.
-        
+
         Args:
             state: Physics state from base environment (np.array)
-        
+
         Returns:
             observation: Either state alone (if use_camera=False) or Dict with state + images + depth
         """
+        # ── v3 centroid-obs: flat 19-D vector ──
+        if self.centroid_obs:
+            cx, cy, frac, vis = self._detect_target_in_image()
+            dcx = cx - self._prev_centroid[0] if vis > 0 else 0.0
+            dcy = cy - self._prev_centroid[1] if vis > 0 else 0.0
+            self._prev_centroid[:] = [cx, cy]
+            extras = np.array([cx, cy, frac, vis, dcx, dcy], dtype=np.float32)
+            return np.concatenate([state.astype(np.float32), extras])
+
         if not self.use_camera:
             # Backward compatibility mode
             return state
-        
+
         # Build Dict observation with state and camera images
         obs = {
             "state": state,
             "camera_high_freq": self._last_high_freq_image.copy(),
-            "camera_low_freq": self._last_low_freq_image.copy()
         }
-        
+
+        if not self.exclude_low_freq_camera:
+            obs["camera_low_freq"] = self._last_low_freq_image.copy()
+
         # Add depth if enabled
         if self.use_depth:
             obs["depth_high_freq"] = self._last_high_freq_depth.copy()
-            obs["depth_low_freq"] = self._last_low_freq_depth.copy()
-        
+            if not self.exclude_low_freq_camera:
+                obs["depth_low_freq"] = self._last_low_freq_depth.copy()
+
         return obs
 
     
@@ -698,9 +994,20 @@ class Panda3DQuadrotorEnv(gym.Env):
             observation: Initial observation (state or Dict with state + images)
             info: Additional information
         """
+        # Constrained init: override options to produce near-hover start
+        if self.constrained_init and (options is None or 'det_state' not in options):
+            init_state = np.zeros(13)
+            pr, vr, ar = self.init_pos_range, self.init_vel_range, self.init_ang_range
+            init_state[0:5:2] = (np.random.rand(3) - 0.5) * 2 * pr
+            init_state[1:6:2] = (np.random.rand(3) - 0.5) * 2 * vr
+            q = euler_quat((np.random.rand(3) - 0.5) * 2 * ar)
+            init_state[6:10] = q.flatten()
+            init_state[10:13] = (np.random.rand(3) - 0.5) * 2 * ar
+            options = {'det_state': init_state}
+
         # Reset base environment
         observation, info = self.base_env.reset(seed=seed, options=options)
-        
+
         # Reset camera step counter
         self._step_counter = 0
         
@@ -723,8 +1030,12 @@ class Panda3DQuadrotorEnv(gym.Env):
         info['collision'] = self.collision_info
         
         # Randomize target if in goal mode
+        if self.centroid_obs:
+            self._prev_centroid[:] = 0.0
+
         if self.use_target:
             self._target_ever_seen = False
+            self._target_visible_last_step = False
             self._randomize_target()
             self._target_time = 0.0
             info['target'] = self._goal_reward()
@@ -755,7 +1066,8 @@ class Panda3DQuadrotorEnv(gym.Env):
         # toward origin, +500 arrival bonus, etc.).  Only keep the boundary
         # violation penalty so the agent learns not to leave the map.
         if self.filming_mode:
-            reward = -200.0 if terminated else 0.0
+            boundary_penalty = -10.0 if self.use_new_reward else -200.0
+            reward = boundary_penalty if terminated else 0.0
             self.base_env.solved = 0
 
         # Increment step counter for camera frame skip
@@ -805,7 +1117,12 @@ class Panda3DQuadrotorEnv(gym.Env):
         
         # Visual tracking reward (dense, per-step)
         if self.use_target and self.use_camera:
-            visual_reward, visual_info = self._compute_visual_tracking_reward()
+            if self.centroid_obs:
+                visual_reward, visual_info = self._compute_hover_reward()
+            elif self.use_new_reward:
+                visual_reward, visual_info = self._compute_new_reward()
+            else:
+                visual_reward, visual_info = self._compute_visual_tracking_reward()
             reward += visual_reward
             info['visual_tracking'] = visual_info
         

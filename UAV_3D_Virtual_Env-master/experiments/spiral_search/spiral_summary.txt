@@ -1,0 +1,88 @@
+SPIRAL SEARCH TEST -- SUMMARY
+==================================================
+Hover height:       1.39 m
+Sphere radius:      0.25 m
+K (blind gate):     20 steps (0.20s)
+Max steps:          2500 (25.0s)
+Damping steps:      15
+
+BEST PARAMETERS:
+  omega_orbit:      1.8 rad/s
+  r_growth:         0.12 m/s
+  yaw_delta:        0.02 (slow FOV rotation)
+  Kv:               1.50 (velocity damping in PD)
+  Kp_xy:            1.5 (position tracking)
+  max_tilt:         0.25 rad (14.3 deg)
+
+PD GAINS:
+  Kp_z=0.5  Kd_z=0.3
+  Kp_att=1.0  Kd_att=0.15
+
+PARAMETER SWEEP (1.0 m, 0 deg + 180 deg):
+  w=1.2  rg=0.12  -> worst=475 steps (4.75s)
+  w=1.2  rg=0.15  -> worst=486 steps (4.86s)
+  w=1.2  rg=0.18  -> worst=495 steps (4.95s)
+  w=1.5  rg=0.12  -> worst=392 steps (3.92s)
+  w=1.5  rg=0.15  -> worst=395 steps (3.95s)
+  w=1.5  rg=0.18  -> worst=398 steps (3.98s)
+  w=1.8  rg=0.12  -> worst=333 steps (3.33s)
+  w=1.8  rg=0.15  -> worst=334 steps (3.34s)
+  w=1.8  rg=0.18  -> worst=337 steps (3.37s)
+
+POSITION ROBUSTNESS:
+  Detection rate: 40/40 (100%)
+  angle=  0 deg  dist=0.5m  -> 1 steps
+  angle=  0 deg  dist=1.0m  -> 333 steps
+  angle=  0 deg  dist=1.5m  -> 357 steps
+  angle=  0 deg  dist=2.0m  -> 745 steps
+  angle=  0 deg  dist=2.5m  -> 1285 steps
+  angle= 45 deg  dist=0.5m  -> 1 steps
+  angle= 45 deg  dist=1.0m  -> 102 steps
+  angle= 45 deg  dist=1.5m  -> 394 steps
+  angle= 45 deg  dist=2.0m  -> 806 steps
+  angle= 45 deg  dist=2.5m  -> 845 steps
+  angle= 90 deg  dist=0.5m  -> 1 steps
+  angle= 90 deg  dist=1.0m  -> 435 steps
+  angle= 90 deg  dist=1.5m  -> 445 steps
+  angle= 90 deg  dist=2.0m  -> 871 steps
+  angle= 90 deg  dist=2.5m  -> 1432 steps
+  angle=135 deg  dist=0.5m  -> 1 steps
+  angle=135 deg  dist=1.0m  -> 117 steps
+  angle=135 deg  dist=1.5m  -> 493 steps
+  angle=135 deg  dist=2.0m  -> 514 steps
+  angle=135 deg  dist=2.5m  -> 943 steps
+  angle=180 deg  dist=0.5m  -> 1 steps
+  angle=180 deg  dist=1.0m  -> 159 steps
+  angle=180 deg  dist=1.5m  -> 526 steps
+  angle=180 deg  dist=2.0m  -> 576 steps
+  angle=180 deg  dist=2.5m  -> 1009 steps
+  angle=225 deg  dist=0.5m  -> 1 steps
+  angle=225 deg  dist=1.0m  -> 216 steps
+  angle=225 deg  dist=1.5m  -> 251 steps
+  angle=225 deg  dist=2.0m  -> 1066 steps
+  angle=225 deg  dist=2.5m  -> 1076 steps
+  angle=270 deg  dist=0.5m  -> 1 steps
+  angle=270 deg  dist=1.0m  -> 264 steps
+  angle=270 deg  dist=1.5m  -> 309 steps
+  angle=270 deg  dist=2.0m  -> 642 steps
+  angle=270 deg  dist=2.5m  -> 1144 steps
+  angle=315 deg  dist=0.5m  -> 1 steps
+  angle=315 deg  dist=1.0m  -> 285 steps
+  angle=315 deg  dist=1.5m  -> 678 steps
+  angle=315 deg  dist=2.0m  -> 696 steps
+  angle=315 deg  dist=2.5m  -> 1214 steps
+
+HANDOFF (sphere at (0, 1.0)):
+  Detection step: 333
+  Displacement: 0.95 m
+
+DESIGN NOTES:
+  Trajectory tracking with feedforward + PD position control.
+  Desired position: x=r(t)*cos(wt), y=r(t)*sin(wt)
+  where r(t)=r_growth*t+0.05 (Archimedes spiral).
+  Feedforward = d²x/dt²: includes centripetal (-r*w²) and
+  Coriolis (-2*dr*w) terms automatically.
+  PD on (pos_err, vel_err) corrects tracking drift.
+  CRITICAL FIX: desired_pitch = (cos(ψ)·ax + sin(ψ)·ay)/g
+  and desired_roll = (sin(ψ)·ax - cos(ψ)·ay)/g. Previous
+  versions had roll/pitch SWAPPED, causing 90 deg direction error.

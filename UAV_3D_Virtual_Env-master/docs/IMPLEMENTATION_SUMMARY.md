@@ -4,6 +4,9 @@
 
 - **Sistema modular de detección de colisiones** con arquitectura profesional y escalable.
 - **Sistema de seguimiento visual** con target magenta, recompensa basada en fracción de imagen y modo filming con aislamiento completo de reward.
+- **Sistema de recompensa v2** con 6 componentes densos, curriculum adaptativo de 3 fases y transfer learning.
+- **Modelo de espiral RL** (`SpiralFollowEnv`) para búsqueda de target perdido con trayectoria de Arquímedes.
+- **Hover Tracking v3** con SAC, cámara vertical, observación centroide 19-D (sin CNN), reward de 3 componentes y controlador de espiral integrado como fallback.
 
 ## 🏗️ Arquitectura Implementada
 
@@ -57,8 +60,22 @@
    - Integración opcional con Panda3D
    - API para gestión de obstáculos
 
+### Scripts de Entrenamiento y Evaluación v2
+3. **`scripts/train_lemniscate_v2.py`** (~682 líneas)
+   - Curriculum adaptativo de 3 fases
+   - Transfer learning con freeze/unfreeze selectivo
+   - Domain randomization basada en rendimiento
+
+4. **`tests/test_lemniscate_v2.py`** (~326 líneas)
+   - Evaluación con telemetría per-step (6 componentes de reward)
+   - Grabación side-by-side (FPV + aérea)
+
+5. **`tests/test_spawn_positions.py`** (~314 líneas)
+   - Validación visual de posiciones de spawn
+   - Gráfica cenital + vídeo de 10 configuraciones
+
 ### Ejemplos y Documentación
-3. **`example_collision_detection.py`** (180 líneas)
+6. **`example_collision_detection.py`** (180 líneas)
    - 5 ejemplos sin Panda3D
    - Demostración de API
 
@@ -107,6 +124,43 @@
 - [x] Filming mode: recompensa del base env **descartada** (0.0), solo se conserva -200 por boundary violation
 - [x] Distancia mínima de inicio (`min_start_distance`) para colocar el target al resetear
 - [x] Altura fija del target a z=0.0 (independiente de la altura del dron)
+
+### ✅ Fase 5: Sistema de Recompensa v2 y Curriculum Adaptativo
+- [x] Recompensa multicomponente: 6 señales densas (survival, stability, centering, scale, discovery, not_visible)
+- [x] Anti-reward-hacking verificado: ratio tracking/hover = 11×
+- [x] Gaussiana asimétrica para R_scale (σ_near < σ_far)
+- [x] R_discovery repetible (cada re-aparición, no one-time)
+- [x] Inicialización constrained (near-hover) con domain randomization progresiva vinculada a rendimiento
+- [x] Curriculum de 3 fases: Fase A (hover, target fijo 2m) → Fase B (lemniscata lenta) → Fase C (velocidad completa)
+- [x] Transiciones adaptativas con thresholds + fallback temporal
+- [x] Transfer learning: freeze del feature extractor CNN + reinicialización de heads
+- [x] Descongelado del CNN en Fase B con lr reducido (1e-5)
+- [x] Entropy bumps al cambiar de fase para re-exploración
+- [x] VecNormalize para estabilización de distribución de rewards
+- [x] Boundary penalty reducida (-200 → -10) para menor variabilidad
+- [x] Test de spawn positions: validación visual de distancia dron-target
+- [x] Script de evaluación con telemetría per-step y grabación de vídeo
+
+### ✅ Fase 6: Calibración de Altitud y Búsqueda en Espiral
+- [x] Calibración empírica de hover height: 1.394m (32×32 px, fracción=25%)
+- [x] SpiralSearchController determinista: espiral de Arquímedes con trajectory tracking + feedforward
+- [x] Test de 3 fases: parameter sweep (9/9), cobertura angular (40/40 = 100%), handoff
+- [x] Omega adaptativo para escalabilidad a radios grandes
+- [x] Corrección del bug roll/pitch swap en conversión inercial→body
+
+### ✅ Fase 7: Hover Tracking con SAC y Modelo de Espiral RL
+- [x] Modelo de espiral RL (`SpiralFollowEnv`): entorno wrapper con reward de 6 componentes y curriculum de 2 fases
+- [x] Cambio de paradigma: cámara frontal → cámara vertical (pitch=-90°)
+- [x] Observación centroide 19-D (Box flat): sin CNN, buffer 80× más pequeño
+- [x] SAC en lugar de PPO: off-policy, entropía auto-ajustada, sample-efficient
+- [x] `_detect_target_in_image()`: extracción de centroide HSV reutilizable
+- [x] `_compute_hover_reward()`: 3 componentes (stability, centering, scale), rango [-1, +4]
+- [x] `SpiralSearchController` con modelo pre-entrenado: máquina de estados TRACK/SEARCH/HANDOFF
+- [x] Handoff suave: blending lineal de 15 steps al re-adquirir target
+- [x] Replay buffer safety: transiciones de espiral excluidas del buffer SAC
+- [x] `exclude_low_freq_camera`: reduce obs Dict eliminando camera_low_freq
+- [x] Entrenamiento SAC completado (200k steps, 509 episodios): reward +10.3×, visibilidad 91%, centering -37%
+- [x] Test de evaluación con integración de espiral y telemetría per-step
 
 ## 🚀 Modos de Uso
 
@@ -224,23 +278,27 @@ Example 5: Info Dict Structure - PASSED
 | Wrapper | ~100 | Bajo | Testing sin GUI |
 | Completo | ~30-60 | Medio | Visualización/Debug |
 
-## 🔄 Próximos Pasos Sugeridos
+## 🔄 Próximos Pasos
 
 ### Corto Plazo
 1. ✅ ~~Implementar detección de colisiones~~ **COMPLETADO**
-2. ✅ ~~Implementar sistema de seguimiento visual con reward basado en fracción~~ **COMPLETADO**
-3. Completar entrenamiento (1M+ timesteps) y evaluar resultados
-4. Ajustar `ideal_fraction`, `fraction_tolerance` y `max_visual_reward` mediante experimentación
+2. ✅ ~~Implementar sistema de seguimiento visual~~ **COMPLETADO**
+3. ✅ ~~Rediseñar reward con componentes densos y curriculum~~ **COMPLETADO**
+4. ✅ ~~Calibrar hover height y espiral de búsqueda~~ **COMPLETADO**
+5. ✅ ~~Entrenar hover tracking con SAC + centroid obs~~ **COMPLETADO (200k steps)**
+6. Extender entrenamiento hover-track (+100-200k steps) para convergencia completa
+7. Evaluar con vídeos el modelo actual + integración de espiral
 
 ### Medio Plazo
-5. Entrenar agente con colisiones + seguimiento visual
-6. Añadir sensores de proximidad (raycast)
-7. Normalización de observaciones
+8. Fase 2: Target móvil lento (0.05 m/s) sin reentrenar → test de generalización
+9. Fase 3: Spawn off-axis + espiral para búsqueda inicial
+10. Tests de generalización: velocidades OOD, init no constrained
 
 ### Largo Plazo
-8. Obstáculos dinámicos
-9. Múltiples quadrotors
-10. Entornos procedurales
+11. Integrar percepción de profundidad si R_scale resulta insuficiente
+12. Entrenar agente con colisiones + seguimiento visual
+13. Obstáculos dinámicos
+14. Múltiples quadrotors
 
 ## 📚 Documentación
 

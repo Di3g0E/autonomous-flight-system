@@ -1,0 +1,71 @@
+{
+  "config": {
+    "omega": 1.8,
+    "r_growth": 0.12,
+    "hover_height": 1.39,
+    "vision_radius": 0.5,
+    "arm_spacing": 0.4189,
+    "max_steps": 3000,
+    "model": "./models/spiral_follow/best_model.zip",
+    "n_episodes": 5
+  },
+  "aggregate": {
+    "mean_reward": 14145.9,
+    "mean_pos_error": 0.0659,
+    "mean_alt_error": 0.1005,
+    "mean_within_vision_pct": 100.0,
+    "mean_steps": 3000.0
+  },
+  "episodes": [
+    {
+      "episode": 1,
+      "steps": 3000,
+      "end_reason": "truncated",
+      "total_reward": 14236.5,
+      "mean_pos_error": 0.061,
+      "mean_alt_error": 0.1001,
+      "within_vision_pct": 100.0,
+      "max_pos_error": 0.1941
+    },
+    {
+      "episode": 2,
+      "steps": 3000,
+      "end_reason": "truncated",
+      "total_reward": 14049.4,
+      "mean_pos_error": 0.0722,
+      "mean_alt_error": 0.1024,
+      "within_vision_pct": 100.0,
+      "max_pos_error": 0.1776
+    },
+    {
+      "episode": 3,
+      "steps": 3000,
+      "end_reason": "truncated",
+      "total_reward": 14322.3,
+      "mean_pos_error": 0.0512,
+      "mean_alt_error": 0.1087,
+      "within_vision_pct": 100.0,
+      "max_pos_error": 0.1862
+    },
+    {
+      "episode": 4,
+      "steps": 3000,
+      "end_reason": "truncated",
+      "total_reward": 13958.6,
+      "mean_pos_error": 0.0779,
+      "mean_alt_error": 0.1,
+      "within_vision_pct": 100.0,
+      "max_pos_error": 0.191
+    },
+    {
+      "episode": 5,
+      "steps": 3000,
+      "end_reason": "truncated",
+      "total_reward": 14162.6,
+      "mean_pos_error": 0.0673,
+      "mean_alt_error": 0.0912,
+      "within_vision_pct": 100.0,
+      "max_pos_error": 0.166
+    }
+  ]
+}

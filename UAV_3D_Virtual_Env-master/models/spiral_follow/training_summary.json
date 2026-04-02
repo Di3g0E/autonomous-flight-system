@@ -1,0 +1,17 @@
+{
+  "total_episodes": 611,
+  "final_mean_reward": 9039.5894433,
+  "final_omega_scale": 1.0,
+  "final_phase": "B",
+  "csv_path": "models\\spiral_follow\\training_log.csv",
+  "total_timesteps": 500000,
+  "training_time_seconds": 35827.15786027908,
+  "omega": 1.8,
+  "r_growth": 0.12,
+  "hover_height": 1.39,
+  "vision_radius": 0.5,
+  "arm_spacing": 0.41887902047863906,
+  "phase_b": 0.4,
+  "n_steps": 2048,
+  "policy_params": 6761
+}
