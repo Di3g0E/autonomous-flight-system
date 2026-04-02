@@ -27,7 +27,6 @@ during TRACK / HANDOFF.
 
 import math
 import numpy as np
-from pathlib import Path
 from stable_baselines3 import PPO
 from src.envs.spiral_follow_env import SpiralFollowEnv
 
@@ -102,14 +101,17 @@ class SpiralSearchController:
 
     # ── Spiral reference (mirrors SpiralFollowEnv) ────────────────────
 
-    def _reset_spiral(self, drone_x, drone_y, drone_z):
+    def _reset_spiral(self, drone_x, drone_y):
         """Initialise spiral centered on the drone's current XY position."""
         self._spiral_step = 0
         self._theta_accum = 0.0
         self._center_x = drone_x
         self._center_y = drone_y
-        # Lock hover height to current altitude (not the training default)
-        self.hover_height = drone_z
+        # Keep hover_height at the TRAINING value (1.39m).
+        # The spiral model was trained with this fixed value and its
+        # dz observation is normalised by it.  Setting hover_height to
+        # the drone's current z produces an out-of-distribution dz
+        # that makes the model output near-zero actions.
 
         r0 = 0.05
         self._ref_x = self._center_x + r0
@@ -184,7 +186,7 @@ class SpiralSearchController:
             if self._invisible_count >= self.invisible_threshold:
                 if self._state == self.TRACK:
                     # Lost → initialise spiral at current position
-                    self._reset_spiral(state_13d[0], state_13d[2], state_13d[4])
+                    self._reset_spiral(state_13d[0], state_13d[2])
                     self._state = self.SEARCH
                 elif self._state == self.HANDOFF:
                     # Lost again during handoff → back to search
