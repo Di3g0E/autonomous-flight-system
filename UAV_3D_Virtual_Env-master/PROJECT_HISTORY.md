@@ -2116,6 +2116,117 @@ Esta sección recopila todos los entrenamientos y tests realizados durante el pr
 
 ---
 
+### T7. Test de Vista Estática Cuádruple (Pipeline de Visión)
+
+**Fecha**: 2026-04-03 | **Tipo**: Visualización del pipeline de visión
+**Script**: `tests/test_static_dual_view.py`
+**Salida**: `experiments/static_dual_view/`
+
+**Motivación**: Visualizar las cuatro etapas del pipeline de visión del dron en una única imagen estática para documentación y comprensión del sistema.
+
+**Configuración**: Escena estática con el dron en hover y la esfera magenta directamente debajo a la distancia calibrada (1.394m). Cámara FPV apuntando hacia abajo, cámara externa posicionada para encuadrar dron + esfera + entorno.
+
+**Paneles generados**:
+
+| Panel | Contenido | Propósito |
+|---|---|---|
+| 1. Raw Camera | Imagen cruda de la cámara del dron (alta resolución) | Mostrar lo que la cámara física captura |
+| 2. RL Input (32×32) | Imagen redimensionada con nearest-neighbor | Mostrar exactamente lo que entra a la red neuronal |
+| 3. HSV Detection + Centroid | Máscara HSV magenta + overlay verde + centroide rojo + bounding box cyan | Visualizar el proceso de reconocimiento del objetivo |
+| 4. External View | Vista tercera persona con dron, esfera y entorno | Contexto espacial de la escena |
+
+**Decisiones de diseño**:
+- Tamaño de panel: 480×480px con barra de título de 40px
+- Separadores blancos de 3px entre paneles
+- Upscale del panel 2 con `INTER_NEAREST` para mostrar los píxeles individuales sin interpolación
+- Detección HSV con rango H:[140-170] S:[100-255] V:[100-255] (magenta)
+- Centroide normalizado a [-1,1] mostrado como texto (cx, cy, frac)
+
+**Artefactos**:
+- `quad_view.png`: Imagen combinada 2×2
+- `1_raw_camera.png`, `2_rl_input_32x32.png`, `3_hsv_detection.png`, `4_external_view.png`: Paneles individuales
+
+---
+
+### T8. Test de Hover Estático con Vídeo (SAC en Acción)
+
+**Fecha**: 2026-04-03 | **Tipo**: Evaluación visual del modelo SAC
+**Script**: `tests/test_static_hover_video.py`
+**Salida**: `experiments/static_dual_view/`
+
+**Motivación**: Grabar vídeo del modelo SAC hover-track activo para verificar visualmente que el controlador mantiene la esfera centrada y evaluar la calidad del tracking en tiempo real.
+
+**Configuración**:
+- Modelo SAC: `models/hover_track/best_model.zip` (19-D centroid obs)
+- Duración: 5s (configurable con `--duration`)
+- FPS: 30 (configurable)
+- Target fijo directamente debajo del dron
+- `constrained_init=True` (pos ±0.2m, vel ±0.1m/s, ang ±0.05rad)
+
+**Pipeline de grabación**:
+1. Reset del entorno → colocar target debajo del dron
+2. Warm-up de 15 steps con acción neutra [0.5, 0.5, 0.5, 0.5]
+3. Bucle de grabación: modelo SAC predice acción → env.step → capturar frame cada `frame_interval` steps
+4. Cada frame se escribe simultáneamente en 5 VideoWriters (4 individuales + quad_view)
+
+**Mismos 4 paneles que T7** pero en vídeo, mostrando la evolución temporal del tracking. El panel de detección HSV muestra el centroide moviéndose en tiempo real conforme el SAC corrige la posición.
+
+**Decisiones de diseño**:
+- Codec: mp4v (MPEG-4), contenedor MP4
+- Si el episodio termina por out-of-bounds, se hace reset manteniendo el mismo target
+- El modelo actúa en modo determinístico (`deterministic=True`)
+
+**Artefactos**: `1_raw_camera.mp4`, `2_rl_input.mp4`, `3_hsv_detection.mp4`, `4_external_view.mp4`, `quad_view.mp4`
+
+---
+
+### T9. Test de Pipeline Espiral-a-Hover (Búsqueda y Estabilización)
+
+**Fecha**: 2026-04-03 | **Tipo**: Integración completa
+**Script**: `tests/test_spiral_to_hover_video.py`
+**Salida**: `experiments/spiral_to_hover/`
+
+**Motivación**: Validar el pipeline completo de búsqueda y estabilización: el dron empieza sin ver el target, lo busca con espiral, frena al encontrarlo y se estabiliza encima.
+
+**Configuración**:
+- Modelos: SAC hover-track v1 + PPO spiral-follow
+- Duración: 20s (configurable con `--duration`)
+- Offset dron-target: 1.5m (configurable con `--offset`)
+- Target fijo colocado a offset XY del dron al inicio
+
+**Controlador de 5 estados** (`SpiralSearchBrakeController`, implementado dentro del test):
+
+| Estado | Controlador | Condición de entrada | Condición de salida |
+|---|---|---|---|
+| STABILIZE | PD hover (brake=True) | Inicio / vuelta desde BRAKE | v_lat < 0.10 m/s AND ≥30 steps |
+| SEARCH | PPO espiral | Desde STABILIZE (estable) | Target detectado |
+| BRAKE | PD hover (brake=True) | Target encontrado en SEARCH | v_lat < 0.15 m/s AND visible ≥10 steps AND ≥20 steps |
+| HANDOFF | Coseno PD→SAC (30 steps) | Desde BRAKE (frenado) | 30 steps completados con target visible |
+| TRACK | SAC (visible) / PD (invisible) | Desde HANDOFF (completo) | Target invisible ≥20 steps → STABILIZE |
+
+**Controlador PD** (`PDHoverController`):
+- Compartido por STABILIZE, BRAKE y TRACK-invisible
+- Altitud: `Kp_z=0.50`, `Kd_z=0.30`
+- Actitud: `Kp_att=1.00`, `Kd_att=0.15`
+- Frenado lateral: `Kd_v=0.60`, max_tilt=0.20 rad
+- Fórmulas body-frame: `desired_pitch = (cos(ψ)·ax + sin(ψ)·ay) / g`, `desired_roll = (-sin(ψ)·ax + cos(ψ)·ay) / g`
+
+**Decisiones de diseño clave**:
+- **STABILIZE antes de SEARCH**: Previene que la espiral empiece con el dron en estado inestable (fallo crítico detectado: el SAC con vis=0 en los primeros 20 steps desestabilizaba el dron)
+- **Dos hover_heights**: `spiral_hover_height=1.39` para la observación 18-D del PPO espiral, `env_hover_height=1.394` para PD y SAC
+- **SAC nunca actúa con vis=0**: En TRACK, si target invisible → PD hover en vez de SAC
+- **Mezcla coseno vs lineal**: `alpha = 0.5*(1-cos(π*step/D))` — inicio y final suaves, evita saltos bruscos
+- **Warm-up con PD**: Los 15 steps iniciales usan PD hover, no acción neutra
+- **Cámara externa fija**: Distancia calculada como `max(r_growth*duration, offset) * 2.5` para cubrir el radio máximo de la espiral
+- **Log de transiciones**: Cada cambio de estado se imprime con timestamp y v_lateral
+
+**Colores de estado en el vídeo**:
+- STABILIZE: cyan | SEARCH: naranja | BRAKE: amarillo | HANDOFF: magenta | TRACK: verde
+
+**Artefactos**: Mismos 5 vídeos que T8, con badges de estado coloreados en cada frame.
+
+---
+
 ### Resumen Comparativo de Todos los Entrenamientos
 
 | ID | Modelo | Algoritmo | Params | Steps | Tiempo | Reward Final | Convergió |
@@ -2141,6 +2252,307 @@ Esta sección recopila todos los entrenamientos y tests realizados durante el pr
 | Spiral follow | ~10h |
 | Hover track | ~7h |
 | **Total aproximado** | **~383 horas** |
+
+---
+
+## [Fecha: 2026-04-03] - Pipeline Espiral-a-Hover y Entrenamiento Robusto v2
+
+### Motivación
+Al integrar el controlador de espiral de búsqueda (E6) con el modelo de hover tracking (E7) se detectaron tres fallos que impedían la transición correcta entre búsqueda y estabilización:
+
+1. **Fallo crítico**: El modelo SAC controlaba el dron mientras el target era invisible (steps 0–19 antes de activar la espiral). El SAC fue entrenado exclusivamente con target visible (vis=1) — con vis=0 producía acciones impredecibles que desestabilizaban el dron antes de que la espiral empezase.
+2. **Fallo moderado**: `hover_height=1.394` en el test vs `1.39` en el entrenamiento de la espiral, causando error de normalización en la observación dz del modelo PPO espiral.
+3. **Fallo de diseño**: La transición directa SEARCH→HANDOFF (15 steps de mezcla lineal) era demasiado abrupta. El dron pasaba de ~1 m/s de velocidad lateral a intentar hover en 0.15s, con el SAC recibiendo observaciones completamente fuera de su distribución de entrenamiento.
+
+### Descripción
+
+#### 1. Controlador de 5 estados con STABILIZE y BRAKE
+
+Se diseñó una máquina de estados completa para gestionar el ciclo búsqueda-estabilización:
+
+```
+STABILIZE (PD hover) → SEARCH (PPO espiral) → BRAKE (PD frenado)
+    ↑                                              ↓           ↓
+    │                                         HANDOFF      timeout/lost
+    │                                         (PD→SAC)         ↓
+    │                                              ↓      STABILIZE
+    └─── target invisible K steps ──── TRACK (SAC)
+```
+
+**Estados implementados**:
+
+| Estado | Controlador | Propósito |
+|---|---|---|
+| **STABILIZE** | PD hover (sin NN) | Estabilizar actitud y frenar velocidad antes de espiral. Garantiza que la espiral empiece desde un estado limpio. |
+| **SEARCH** | PPO espiral | Ejecuta espiral de Arquímedes expandiéndose para barrer el área. |
+| **BRAKE** | PD hover con frenado | Desacelera velocidad lateral al detectar target. Condiciones de salida: v_lat < 0.15 m/s, target visible ≥10 steps, mínimo 20 steps. |
+| **HANDOFF** | Mezcla coseno PD→SAC | Transición suave durante 30 steps con curva `0.5*(1-cos(π*t/D))`. |
+| **TRACK** | SAC (visible) / PD (invisible) | El SAC **nunca** actúa con target invisible. Si vis=0 → PD hover mantiene posición. |
+
+**Decisiones de diseño clave**:
+- **PD hover como controlador universal de seguridad**: No depende de distribución de entrenamiento, funciona en cualquier estado. Se usa en STABILIZE, BRAKE, TRACK-invisible y durante el warm-up.
+- **Dos hover_heights separadas**: `spiral_hover_height=1.39` para la observación 18-D del modelo PPO espiral (matching de entrenamiento), `env_hover_height=1.394` para el PD y el SAC.
+- **BRAKE→STABILIZE en vez de BRAKE→SEARCH**: Si BRAKE falla (timeout 100 steps o target perdido), el dron se estabiliza primero antes de reiniciar la espiral desde la posición actual.
+- **Espiral siempre desde posición actual**: Al reiniciar búsqueda, la espiral se centra en el XY actual del dron (no en la posición original).
+
+#### 2. Test de vídeo con cuadrícula 4 vistas
+
+**Script**: `tests/test_spiral_to_hover_video.py`
+**Salida**: `experiments/spiral_to_hover/`
+
+Graba 4 vídeos sincronizados + quad_view en cuadrícula 2×2:
+
+| Panel | Contenido |
+|---|---|
+| 1. Raw Camera | Imagen cruda de la cámara del dron (alta resolución) |
+| 2. RL Input | Imagen 32×32 que entra a la red neuronal (nearest-neighbor upscale) |
+| 3. HSV Detection | Máscara HSV magenta + centroide + bounding box |
+| 4. External View | Vista exterior fija mostrando dron + target + entorno |
+
+**Características del test**:
+- El dron empieza con offset de 1.5m respecto al target (configurable con `--offset`)
+- Cámara externa fija calculada para cubrir radio máximo de espiral + offset
+- Badge de estado coloreado en cada frame (STABILIZE=cyan, SEARCH=naranja, BRAKE=amarillo, HANDOFF=magenta, TRACK=verde)
+- Log de transiciones de estado con timestamp y velocidad lateral
+
+#### 3. Entrenamiento SAC v2 con curriculum
+
+**Script**: `scripts/train_hover_track_v2.py`
+**Salida**: `models/hover_track_v2/` (modelo original en `models/hover_track/` intacto)
+
+**Problema que resuelve**: El SAC v1 fue entrenado con target siempre centrado en la imagen (cx≈0, cy≈0), velocidad inicial ±0.1 m/s, y sin exposición a vis=0. En la transición espiral→hover, el SAC recibía observaciones fuera de distribución.
+
+**Solución**: Entrenamiento con curriculum progresivo que aleatoriza el offset XY del target y las condiciones iniciales del dron:
+
+| Fase | Progreso | Target offset | Init vel | Init ang | Simula |
+|---|---|---|---|---|---|
+| A | 0–30% | ±0.1→0.3 m | ±0.10→0.15 m/s | ±0.05 rad | Hover con perturbaciones leves |
+| B | 30–70% | ±0.3→0.6 m | ±0.15→0.25 m/s | ±0.05→0.10 rad | Target descentrado, dron en movimiento |
+| C | 70–100% | ±0.6→1.0 m | ±0.25→0.35 m/s | ±0.10→0.15 rad | Recuperación post-espiral (condiciones ~2× más exigentes que la realidad) |
+
+**Cambios vs v1**:
+
+| Parámetro | v1 | v2 | Justificación |
+|---|---|---|---|
+| Target | Siempre centrado | Offset XY aleatorio (curriculum) | Robustez a target descentrado |
+| Red | [128, 64] | [256, 128] | Más capacidad para distribución más amplia |
+| Episodio | 500 steps (5s) | 1500 steps (15s) | Tiempo para recuperación |
+| Buffer | 300k | 500k | Más diversidad de experiencias |
+| learning_starts | 5k | 10k | Más exploración con nuevas condiciones |
+| Timesteps | 200k | 500k | Más tiempo para curriculum completo |
+| Checkpoints | No | Cada 50k steps | Selección del mejor modelo |
+
+**Implementación técnica**:
+- `OffsetTargetWrapper(Panda3DQuadrotorEnv)`: Wrapper que tras cada reset() desplaza el target por un offset XY aleatorio, recaptura la cámara y reconstruye la observación.
+- `CurriculumCallback(BaseCallback)`: Callback de SB3 que en cada `_on_rollout_end` calcula el progreso, determina la fase, y actualiza dinámicamente `init_pos_range`, `init_vel_range`, `init_ang_range` y `target_offset_range` en el entorno.
+- Fase C con condiciones post-espiral ~2× más exigentes que las reales (v_lat real post-BRAKE ≤0.15 m/s vs entrenamiento ±0.35 m/s) para margen de seguridad.
+
+### Archivos Afectados
+
+**Nuevos**:
+- `tests/test_spiral_to_hover_video.py` — Test de vídeo del pipeline completo espiral→hover con controlador de 5 estados
+- `scripts/train_hover_track_v2.py` — Entrenamiento SAC v2 con curriculum y target offset
+
+**No modificados** (decisión deliberada):
+- `src/agents/spiral_search_controller.py` — El controlador original de 3 estados se mantiene para `test_hover_track.py`
+- `models/hover_track/best_model.zip` — Modelo v1 preservado
+
+### Resultados/Observaciones
+
+- El controlador de 5 estados elimina completamente el problema de SAC con vis=0
+- El PD de frenado reduce la velocidad lateral de ~1 m/s a <0.15 m/s antes de entregar control al SAC
+- La mezcla coseno de 30 steps es significativamente más suave que la lineal de 15 steps
+- El warm-up del test ahora usa PD hover en vez de acción neutra, evitando drift inicial
+- ~~Pendiente: evaluar el modelo SAC v2 tras entrenamiento y comparar con v1~~ → Completado (ver siguiente sección)
+
+---
+
+## [Fecha: 2026-04-05] - Test de Vídeo y Evaluación Cuantitativa del Modelo Hover-Track v2
+
+### Motivación
+Tras completar el entrenamiento del SAC v2 con curriculum, es necesario:
+1. Verificar visualmente que el modelo funciona (test de vídeo con 4 vistas simultáneas).
+2. Cuantificar el rendimiento del pipeline completo bajo distintos niveles de dificultad con una muestra estadísticamente significativa.
+3. Identificar debilidades concretas para orientar futuras mejoras.
+
+### Descripción
+
+#### 1. Test de vídeo — Hover-Track v2
+
+**Script**: `tests/test_hover_track_v2_video.py`
+**Salida**: `experiments/hover_track_v2/`
+
+Graba 4 vídeos sincronizados + `quad_view.mp4` en cuadrícula 2×2, análogo al test de vídeo de hover estático pero adaptado a las condiciones v2:
+
+| Panel | Vídeo | Contenido |
+|---|---|---|
+| 1. Raw Camera | `1_raw_camera.mp4` | Imagen cruda de alta resolución de la cámara del dron |
+| 2. RL Input | `2_rl_input.mp4` | Imagen 32×32 que usa la red neuronal (nearest-neighbor upscale) |
+| 3. HSV Detection | `3_hsv_detection.mp4` | Máscara HSV magenta + centroide + bounding box |
+| 4. External View | `4_external_view.mp4` | Vista exterior con dron + objetivo + entorno 3D |
+
+**Diferencias respecto al test de vídeo estático (`test_static_hover_video.py`)**:
+- Usa el modelo v2 (`models/hover_track_v2/best_model.zip`)
+- Aplica **offset al objetivo** (0.6 m por defecto) en dirección aleatoria para probar re-centrado
+- Condiciones iniciales post-espiral: velocidad lateral (0.30 m/s) y tilt (0.12 rad)
+- Cámara externa posicionada dinámicamente para encuadrar dron + target con offset
+- Reporta recompensa acumulada y porcentaje de visibilidad en consola
+
+**Argumentos CLI**:
+
+| Argumento | Default | Descripción |
+|---|---|---|
+| `--model-path` | `./models/hover_track_v2/best_model.zip` | Ruta al modelo SAC |
+| `--duration` | `5` | Duración en segundos |
+| `--fps` | `30` | Framerate del vídeo |
+| `--panel-size` | `480` | Resolución de cada panel (px) |
+| `--target-offset` | `0.6` | Offset XY del target (metros) |
+| `--init-vel` | `0.30` | Velocidad lateral inicial (m/s) |
+| `--init-ang` | `0.12` | Tilt inicial (rad) |
+
+#### 2. Evaluador cuantitativo del pipeline
+
+**Script**: `tests/evaluate_hover_track_v2.py`
+**Salida**: `experiments/hover_track_v2/`
+
+Evaluador multi-episodio que ejecuta N episodios en tres tiers de dificultad (Easy, Medium, Hard) que replican las fases del curriculum de entrenamiento, y produce métricas detalladas.
+
+**Tiers de dificultad** (mapean a las fases del curriculum):
+
+| Tier | Offset | Velocidad | Tilt | Equivale a |
+|---|---|---|---|---|
+| Easy | 0.2 m | 0.10 m/s | 0.05 rad | Fase A (hover con perturbaciones leves) |
+| Medium | 0.6 m | 0.25 m/s | 0.10 rad | Fase B (target descentrado) |
+| Hard | 1.0 m | 0.35 m/s | 0.15 rad | Fase C (recuperación post-espiral) |
+
+**Métricas recopiladas por paso** (telemetry.csv):
+- Posición y velocidad del dron (x, vx, y, vy, z, vz)
+- Visibilidad del target, distancia de centrado, fracción del target en imagen
+- Componentes de reward: R_stability, R_centering, R_scale
+- Magnitud de acción
+
+**Métricas agregadas por episodio** (episodes.csv):
+- Reward total, media y desviación estándar
+- Porcentaje de visibilidad, media de centrado y fracción
+- Magnitud media de acción y jerk (suavidad del control)
+- Terminación temprana (sí/no)
+
+**Ficheros de salida**:
+
+| Fichero | Contenido |
+|---|---|
+| `telemetry.csv` | Datos por paso: posición, velocidad, visibilidad, centroide, reward |
+| `episodes.csv` | Stats por episodio: reward, visibilidad, centrado, fracción, jerk |
+| `evaluation_summary.json` | Estadísticas globales + desglose por tier (mean/std/min/max) |
+| `reward_components.png` | Barras de R_stability, R_centering, R_scale por tier |
+| `centering_timeline.png` | Distancia de centrado a lo largo del tiempo (1 línea por episodio) |
+| `tier_boxplots.png` | Box-plots comparando reward, visibilidad, centrado y jerk entre tiers |
+
+**Argumentos CLI**:
+
+| Argumento | Default | Descripción |
+|---|---|---|
+| `--model-path` | `./models/hover_track_v2/best_model.zip` | Ruta al modelo SAC |
+| `--duration` | `5` | Duración de cada episodio (segundos) |
+| `--episodes-per-tier` | `4` | Episodios por tier (total = ×3) |
+| `--no-display` | `False` | Minimiza ventana Panda3D |
+| `--no-plots` | `False` | Omite generación de gráficas |
+
+### Resultados de la Evaluación (150 episodios: 50 por tier, 20s cada uno)
+
+#### Resultados globales
+
+| Métrica | Media | Std | Min | Max |
+|---|---|---|---|---|
+| Reward total | 2427 | 1725 | -20 | 6331 |
+| Visibilidad | 92.1% | 13.7% | 3.7% | 100% |
+| Dist. centrado | 0.636 | 0.146 | 0.186 | 0.943 |
+| Fracción objetivo | 0.076 | 0.043 | 0.011 | 0.211 |
+| Magnitud acción | 0.170 | 0.113 | 0.016 | 0.480 |
+| Jerk (suavidad) | 0.082 | 0.064 | 0.014 | 0.387 |
+| R_stability | 0.918 | 0.095 | 0.500 | 0.999 |
+| R_centering | 0.670 | 0.270 | 0.014 | 1.264 |
+| R_scale | 0.356 | 0.194 | 0.016 | 0.945 |
+| **Supervivencia** | **38.7%** | — | — | **92/150 terminaciones tempranas** |
+
+#### Resultados por tier
+
+| Métrica | Easy | Medium | Hard |
+|---|---|---|---|
+| Reward | 3743 | 2644 | 895 |
+| Visibilidad | 99.4% | 97.5% | 79.4% |
+| Centrado | 0.600 | 0.656 | 0.652 |
+| Fracción | 0.115 | 0.074 | 0.041 |
+| Acción mag. | 0.090 | 0.137 | 0.283 |
+| Jerk | 0.057 | 0.098 | 0.092 |
+| R_stability | 0.970 | 0.949 | 0.835 |
+| R_centering | 0.784 | 0.649 | 0.578 |
+| R_scale | 0.533 | 0.349 | 0.186 |
+| **Supervivencia** | **70%** | **40%** | **6%** |
+
+#### Análisis detallado
+
+**Puntos fuertes**:
+1. **Estabilidad excelente**: R_stability media de 0.918 (max 1.0). El dron mantiene orientación estable incluso bajo condiciones difíciles.
+2. **Visibilidad muy alta**: 92.1% global, 99.4% en easy. El modelo casi nunca pierde de vista al objetivo.
+3. **Control suave en easy**: Acción media 0.090, jerk 0.057. En condiciones fáciles el controlador es eficiente y no oscila.
+
+**Debilidades identificadas (por prioridad)**:
+
+| Prioridad | Problema | Evidencia | Impacto |
+|---|---|---|---|
+| **1** | Recuperación inicial frágil | 30% falla incluso en easy; 94% en hard | Supervivencia global 38.7% |
+| **2** | No ajusta altitud/escala | Fracción 0.076 vs ideal 0.25; R_scale peor componente | Reward subóptimo incluso cuando sobrevive |
+| **3** | Centrado limitado a ~0.6 | Dist. centrado similar en los 3 tiers (0.60–0.65) | Techo de rendimiento en R_centering |
+
+**Hallazgos específicos**:
+- **Bimodalidad en easy**: Los episodios que sobreviven tienen acción ~0.06 y R_stability ~0.997 (control suave), mientras que los que mueren tienen acción ~0.14 y R_stability ~0.90 (oscilación creciente). Dependiendo de las condiciones iniciales exactas, el modelo entra en un modo inestable.
+- **Hard funcionalmente inviable**: Solo 3 de 50 episodios sobreviven los 2000 pasos. Sin embargo, el episodio 133 logra reward 4834, demostrando que el modelo *puede* funcionar en hard pero es extremadamente raro.
+- **Episodio 141 (hard)**: Reward negativo (-20.33), visibilidad 3.7% en 1371 pasos. El dron nunca encontró el objetivo tras perderlo.
+- **La fracción es sistemáticamente baja** en todos los tiers (0.115/0.074/0.041 vs ideal 0.25). El modelo no aprendió a ajustar su altitud para acercarse al ideal de escala.
+- **Validación estadística**: Con 10 episodios (ejecución previa) medium parecía peor que hard (supervivencia 10% vs 50%). Con 50 episodios la degradación es monótona (70%→40%→6%), confirmando que muestras pequeñas producen conclusiones erróneas.
+
+#### Recomendaciones para v3
+
+1. **Fase de recuperación inicial**: Añadir una fase 0 al curriculum (primeros 5-10%) donde el modelo entrene exclusivamente a estabilizarse desde condiciones perturbadas sin objetivo, para aprender a cancelar velocidad/tilt antes de intentar trackear.
+2. **Incrementar peso de R_scale**: Multiplicar R_scale por 2-3× en la función de reward. Actualmente R_centering (max 2.0) domina sobre R_scale (max 1.0).
+3. **Más timesteps en fase C**: El modelo actual dedica solo 30% al régimen difícil. Con 94% de fallo en hard, necesita significativamente más exposición (40-50%) o duplicar timesteps totales.
+4. **Episodios más largos**: Muchos episodios hard mueren en <500 pasos (~5s). Considerar 3000+ pasos (30s) para que el modelo experimente recuperaciones exitosas largas.
+
+### Archivos Afectados
+
+**Nuevos**:
+- `tests/test_hover_track_v2_video.py` — Test de vídeo con 4 vistas + quad-view para el modelo v2
+- `tests/evaluate_hover_track_v2.py` — Evaluador cuantitativo multi-tier (easy/medium/hard)
+
+**Generados por la evaluación** (en `experiments/hover_track_v2/`):
+- `telemetry.csv` — Datos por paso (150 episodios × hasta 2000 pasos)
+- `episodes.csv` — Estadísticas por episodio (150 filas)
+- `evaluation_summary.json` — Resumen global + por tier
+- `reward_components.png` — Gráfica de componentes de reward
+- `centering_timeline.png` — Timeline de centrado
+- `tier_boxplots.png` — Box-plots de comparación entre tiers
+- `1_raw_camera.mp4`, `2_rl_input.mp4`, `3_hsv_detection.mp4`, `4_external_view.mp4`, `quad_view.mp4` — Vídeos del test visual
+
+### Resultados/Observaciones
+- El modelo v2 mejora significativamente la robustez frente a v1 en visibilidad y estabilidad, pero la supervivencia (38.7% global) revela que aún no es fiable para el pipeline completo espiral→hover.
+- La fracción del objetivo en imagen (0.076 vs ideal 0.25) es la debilidad más consistente: el modelo no aprendió a controlar la altitud para mantener la escala correcta.
+- La evaluación con 150 episodios fue fundamental para obtener resultados fiables — la ejecución previa con 30 episodios producía conclusiones erróneas sobre la relación medium/hard.
+- Decisión: las recomendaciones para v3 se implementarán en la siguiente sesión, priorizando la recuperación inicial y el peso de R_scale.
+
+---
+
+### Inventario de Modelos Entrenados
+
+| Modelo | Ruta | Algoritmo | Params | Propósito |
+|---|---|---|---|---|
+| **Depth U-Net** | `models/depth_final/best_model.pth` | Supervisado | 1.2M | Estimar profundidad monocular a partir de imagen RGB 32×32 |
+| **Goal Controller** | `models/goal_controller/best_model.zip` | PPO | 97,769 | Controlador básico de vuelo: alcanzar una posición objetivo |
+| **Lemniscate v1** | `models/lemniscate_follower/interrupted_model.zip` | PPO | ~135k | Seguir trayectoria en ∞ (no convergió) |
+| **Lemniscate v2** | `models/lemniscate_v2/interrupted_model.zip` | PPO | ~135k | Seguir trayectoria en ∞ con curriculum (interrumpido, parcial) |
+| **Spiral Follow** | `models/spiral_follow/best_model.zip` | PPO | 6,761 | Seguir espiral de Arquímedes para búsqueda de target perdido |
+| **Hover Track v1** | `models/hover_track/best_model.zip` | SAC | 56,908 | Mantener dron estático sobre target con cámara vertical (condiciones ideales) |
+| **Hover Track v2** | `models/hover_track_v2/best_model.zip` | SAC | ~160k | Hover tracking robusto: target descentrado, recuperación post-espiral. Evaluado: supervivencia 70% easy / 40% medium / 6% hard |
 
 ---
 

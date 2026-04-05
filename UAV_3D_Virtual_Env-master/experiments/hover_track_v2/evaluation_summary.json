@@ -1,0 +1,243 @@
+{
+  "model": "./models/hover_track_v2/best_model.zip",
+  "duration_s": 20,
+  "episodes_per_tier": 50,
+  "global": {
+    "total_reward": {
+      "mean": 2427.468,
+      "std": 1724.898,
+      "min": -20.33,
+      "max": 6330.88
+    },
+    "visibility_pct": {
+      "mean": 92.06,
+      "std": 13.7249,
+      "min": 3.7,
+      "max": 100.0
+    },
+    "mean_centering_dist": {
+      "mean": 0.6357,
+      "std": 0.1464,
+      "min": 0.1858,
+      "max": 0.9427
+    },
+    "mean_fraction": {
+      "mean": 0.0764,
+      "std": 0.0431,
+      "min": 0.0112,
+      "max": 0.2112
+    },
+    "mean_action_mag": {
+      "mean": 0.1697,
+      "std": 0.1128,
+      "min": 0.016,
+      "max": 0.4803
+    },
+    "mean_action_jerk": {
+      "mean": 0.0823,
+      "std": 0.0644,
+      "min": 0.0139,
+      "max": 0.3868
+    },
+    "mean_r_stability": {
+      "mean": 0.9179,
+      "std": 0.0951,
+      "min": 0.5004,
+      "max": 0.9992
+    },
+    "mean_r_centering": {
+      "mean": 0.6702,
+      "std": 0.2701,
+      "min": 0.0139,
+      "max": 1.2635
+    },
+    "mean_r_scale": {
+      "mean": 0.356,
+      "std": 0.1941,
+      "min": 0.0156,
+      "max": 0.9448
+    },
+    "episodes": 150,
+    "early_terminations": 92,
+    "survival_rate_pct": 38.7
+  },
+  "tiers": {
+    "easy": {
+      "total_reward": {
+        "mean": 3743.3664,
+        "std": 1463.8756,
+        "min": 1398.36,
+        "max": 6330.88
+      },
+      "visibility_pct": {
+        "mean": 99.354,
+        "std": 2.0183,
+        "min": 89.8,
+        "max": 100.0
+      },
+      "mean_centering_dist": {
+        "mean": 0.5996,
+        "std": 0.1438,
+        "min": 0.3935,
+        "max": 0.8614
+      },
+      "mean_fraction": {
+        "mean": 0.1145,
+        "std": 0.039,
+        "min": 0.0644,
+        "max": 0.2112
+      },
+      "mean_action_mag": {
+        "mean": 0.0899,
+        "std": 0.0443,
+        "min": 0.0337,
+        "max": 0.2194
+      },
+      "mean_action_jerk": {
+        "mean": 0.0568,
+        "std": 0.044,
+        "min": 0.0229,
+        "max": 0.2491
+      },
+      "mean_r_stability": {
+        "mean": 0.9702,
+        "std": 0.0415,
+        "min": 0.8837,
+        "max": 0.9985
+      },
+      "mean_r_centering": {
+        "mean": 0.7835,
+        "std": 0.3072,
+        "min": 0.301,
+        "max": 1.258
+      },
+      "mean_r_scale": {
+        "mean": 0.5327,
+        "std": 0.1752,
+        "min": 0.3179,
+        "max": 0.9448
+      },
+      "episodes": 50,
+      "early_terminations": 15,
+      "survival_rate_pct": 70.0
+    },
+    "medium": {
+      "total_reward": {
+        "mean": 2644.0414,
+        "std": 1360.7812,
+        "min": 460.26,
+        "max": 5537.69
+      },
+      "visibility_pct": {
+        "mean": 97.452,
+        "std": 6.1871,
+        "min": 70.7,
+        "max": 100.0
+      },
+      "mean_centering_dist": {
+        "mean": 0.6559,
+        "std": 0.0926,
+        "min": 0.4627,
+        "max": 0.8824
+      },
+      "mean_fraction": {
+        "mean": 0.0736,
+        "std": 0.0274,
+        "min": 0.0112,
+        "max": 0.1518
+      },
+      "mean_action_mag": {
+        "mean": 0.1368,
+        "std": 0.0743,
+        "min": 0.016,
+        "max": 0.4065
+      },
+      "mean_action_jerk": {
+        "mean": 0.0984,
+        "std": 0.0709,
+        "min": 0.0139,
+        "max": 0.38
+      },
+      "mean_r_stability": {
+        "mean": 0.9487,
+        "std": 0.0578,
+        "min": 0.7705,
+        "max": 0.9992
+      },
+      "mean_r_centering": {
+        "mean": 0.6488,
+        "std": 0.1933,
+        "min": 0.1916,
+        "max": 1.0897
+      },
+      "mean_r_scale": {
+        "mean": 0.349,
+        "std": 0.1117,
+        "min": 0.1273,
+        "max": 0.6824
+      },
+      "episodes": 50,
+      "early_terminations": 30,
+      "survival_rate_pct": 40.0
+    },
+    "hard": {
+      "total_reward": {
+        "mean": 894.9962,
+        "std": 896.7715,
+        "min": -20.33,
+        "max": 4833.87
+      },
+      "visibility_pct": {
+        "mean": 79.374,
+        "std": 16.7198,
+        "min": 3.7,
+        "max": 100.0
+      },
+      "mean_centering_dist": {
+        "mean": 0.6516,
+        "std": 0.1819,
+        "min": 0.1858,
+        "max": 0.9427
+      },
+      "mean_fraction": {
+        "mean": 0.041,
+        "std": 0.0241,
+        "min": 0.0152,
+        "max": 0.1431
+      },
+      "mean_action_mag": {
+        "mean": 0.2825,
+        "std": 0.1026,
+        "min": 0.0425,
+        "max": 0.4803
+      },
+      "mean_action_jerk": {
+        "mean": 0.0917,
+        "std": 0.067,
+        "min": 0.0309,
+        "max": 0.3868
+      },
+      "mean_r_stability": {
+        "mean": 0.8348,
+        "std": 0.1072,
+        "min": 0.5004,
+        "max": 0.9985
+      },
+      "mean_r_centering": {
+        "mean": 0.5781,
+        "std": 0.2557,
+        "min": 0.0139,
+        "max": 1.2635
+      },
+      "mean_r_scale": {
+        "mean": 0.1864,
+        "std": 0.0989,
+        "min": 0.0156,
+        "max": 0.5721
+      },
+      "episodes": 50,
+      "early_terminations": 47,
+      "survival_rate_pct": 6.0
+    }
+  }
+}

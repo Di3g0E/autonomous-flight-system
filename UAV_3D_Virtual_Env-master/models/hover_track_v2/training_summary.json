@@ -1,0 +1,22 @@
+{
+  "total_episodes": 764,
+  "final_mean_reward": 1768.90226956,
+  "final_phase": "C",
+  "csv_path": "models\\hover_track_v2\\training_log.csv",
+  "total_timesteps": 500000,
+  "training_time_seconds": 43681.17898058891,
+  "hover_height": 1.394,
+  "algorithm": "SAC",
+  "version": "v2",
+  "observation_dim": 19,
+  "net_arch": [
+    256,
+    128
+  ],
+  "curriculum_phases": {
+    "A": "0-30%",
+    "B": "30%-70%",
+    "C": "70%-100%"
+  },
+  "policy_params": 195724
+}

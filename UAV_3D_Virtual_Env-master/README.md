@@ -17,19 +17,28 @@ Esta base sólida permitió probar algoritmos en un entorno simulado antes de su
 
 # Cómo Empezar (Instalación y Ejecución)
 
-Este proyecto requiere Python 3.9+ (se recomienda 3.10 o superior).
+Este proyecto requiere Python 3.10+. Se recomienda el uso de [uv](https://github.com/astral-sh/uv) para una gestión de dependencias mucho más rápida.
 
-### 1. Activar el Entorno Virtual
-El proyecto ya incluye un entorno virtual en la carpeta `.v`. Para activarlo:
+### 1. Configuración del Entorno (con `uv`)
+Si es la primera vez que configuras el proyecto o quieres recrear el entorno `.v`:
 
+```powershell
+# Crear el entorno virtual .v (si no existe) e instalar dependencias
+uv venv .v --python 3.10
+.\.v\Scripts\activate
+uv pip install -e .[all]
+```
+
+### 2. Método Tradicional (Venv + Pip)
+Si no utilizas `uv`, puedes seguir el método estándar:
+
+#### Activar el Entorno Virtual
 ```powershell
 # En Windows (PowerShell)
 .\.v\Scripts\activate
 ```
 
-### 2. Instalar el Proyecto (Si es necesario)
-Si es la primera vez que configuras el proyecto o has borrado el entorno, instala todas las dependencias:
-
+#### Instalar el Proyecto
 ```powershell
 # Habilitar rutas largas en Windows (ejecutar como ADMIN si da error de rutas largas)
 # New-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
@@ -253,6 +262,47 @@ python scripts/train_spiral_follow.py --timesteps 500000
 | Centering | 0.43 | 0.27 (-37%) |
 | Estabilidad | 0.59 | 0.99 |
 | Episodios completos | ~20% | 100% |
+
+### Hover Track v2 — Entrenamiento Robusto con Curriculum
+
+Reentrenamiento del modelo SAC con target descentrado y condiciones post-espiral para mejorar la transición búsqueda→estabilización:
+
+```bash
+# Entrenar v2 (500k steps, ~60h, guarda checkpoints cada 50k)
+python scripts/train_hover_track_v2.py --timesteps 500000 --no-display
+```
+
+Tres fases de curriculum progresivo: target offset ±0.1→1.0m, velocidad lateral ±0.10→0.35 m/s, tilt ±0.05→0.15 rad. El modelo original v1 no se modifica.
+
+---
+
+## Pipeline Espiral-a-Hover (Búsqueda y Estabilización)
+
+Pipeline completo de 5 estados para buscar un target perdido con espiral y estabilizarse sobre él:
+
+```
+STABILIZE (PD) → SEARCH (PPO espiral) → BRAKE (PD) → HANDOFF (PD→SAC) → TRACK (SAC)
+```
+
+```bash
+# Grabar vídeo del pipeline completo (4 vistas + quad_view)
+python tests/test_spiral_to_hover_video.py --duration 20 --offset 1.5
+```
+
+El controlador garantiza que el SAC nunca actúa con el target invisible y que el dron frena antes de la transición.
+
+---
+
+## Modelos Entrenados
+
+| Modelo | Ruta | Algoritmo | Propósito |
+|---|---|---|---|
+| Depth U-Net | `models/depth_final/best_model.pth` | Supervisado | Estimar profundidad monocular desde imagen RGB 32×32 |
+| Goal Controller | `models/goal_controller/best_model.zip` | PPO | Controlador base: alcanzar posición objetivo en 3D |
+| Spiral Follow | `models/spiral_follow/best_model.zip` | PPO | Seguir espiral de Arquímedes para búsqueda de target perdido |
+| Hover Track v1 | `models/hover_track/best_model.zip` | SAC | Hover estático sobre target (condiciones ideales, target centrado) |
+| Hover Track v2 | `models/hover_track_v2/best_model.zip` | SAC | Hover robusto: target descentrado, recuperación post-espiral |
+| Lemniscate v2 | `models/lemniscate_v2/interrupted_model.zip` | PPO | Seguir trayectoria en ∞ (interrumpido, parcial) |
 
 ---
 
