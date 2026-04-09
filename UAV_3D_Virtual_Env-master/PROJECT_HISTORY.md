@@ -2604,6 +2604,185 @@ El diseño de v3 es deliberadamente compatible con fine-tuning sobre target en m
 
 ---
 
+## [Fecha: 2026-04-09] - Hover Track v3.1: Reward con Estabilidad como Gate y Fine-Tune desde v3
+
+### Motivación
+
+El modelo hover_track_v3, a pesar de la mejora sustancial respecto a v2, presentaba un problema crítico en los niveles de dificultad medium y hard: **el dron encontraba el objetivo pero perdía la estabilidad al intentar centrarlo**. Esto se manifestaba como oscilaciones crecientes que terminaban en crash o en pérdida del target.
+
+#### Diagnóstico cuantitativo (evaluación de checkpoints v3)
+
+Se evaluaron 5 checkpoints (750k, 800k, 850k, 900k y 1.5M) sobre 3 niveles de dificultad (easy: offset 0.2m, medium: 0.6m, hard: 1.0m) con 5 episodios por tier y 10s de duración:
+
+| Checkpoint | Supervivencia global | Reward medio | Visibilidad | Centrado | Easy surv. | Medium surv. | Hard surv. |
+|---|---|---|---|---|---|---|---|
+| 750k | 66.7% | 2,174 | 74.0% | 0.616 | 100% | 80% | 20% |
+| 800k | 86.7% | 2,887 | 86.3% | 0.533 | 100% | 100% | 60% |
+| **850k** | **80.0%** | **2,920** | **91.1%** | **0.467** | 80% | 80% | **80%** |
+| **900k** | **80.0%** | **2,974** | 83.7% | 0.479 | **100%** | **100%** | 40% |
+| 1.5M | 86.7% | 2,102 | 75.9% | 0.658 | 80% | 80% | 100% |
+
+**Observaciones clave**:
+- El checkpoint de **850k** es el más equilibrado globalmente (mejor visibilidad 91.1%, mejor centrado 0.467, único con 80% en los 3 tiers).
+- El checkpoint de **900k** es superior en easy/medium (100%/100% supervivencia, mejores rewards) pero catastrófico en hard (40%).
+- El modelo de 1.5M (final) muestra **degradación** respecto a 850-900k: sobreajuste a condiciones de Phase C con pérdida de generalización.
+- El patrón común: el dron **encuentra el target y ejecuta correcciones agresivas que lo desestabilizan**. La reward incentiva centrar a costa de la estabilidad.
+
+#### Análisis de la causa raíz: desequilibrio en la función de reward v3
+
+La función de reward v3 tiene un problema estructural. Los componentes son **aditivos e independientes**:
+
+```
+total = R_stability + R_centering + R_center_vel + R_scale + R_invisible
+        (max 1.0)    (max 4.0)      (max 1.0)       (max 1.0)  (-1.0)
+```
+
+Tres problemas fundamentales:
+
+1. **R_centering domina 4:1 sobre R_stability**: La señal de centrado es 4 veces más fuerte que la de estabilidad. El agente aprende que corregir agresivamente hacia el centro vale mucho más que mantener la orientación estable. Cuando el target está lejos del centro (medium/hard), ejecuta cambios bruscos de motores para maximizar R_centering, generando oscilaciones que desestabilizan el dron.
+
+2. **Acoplamiento aditivo, no multiplicativo**: El agente puede obtener R_centering=4.0 incluso cuando R_stability≈0 (totalmente inestable). No existe un mecanismo que condicione la recompensa de tracking a la estabilidad del vuelo. Un dron que oscila violentamente pero pasa por el centro de la imagen recibe la misma recompensa de centering que uno estable y centrado.
+
+3. **Sin penalización por jerk de acciones**: No hay coste por cambios bruscos en los motores. El agente puede oscilar los 4 motores de un extremo a otro entre steps consecutivos sin ninguna penalización. Esto favorece un comportamiento de "bang-bang" que amplifica las oscilaciones.
+
+4. **R_vel_cancel solo en Phase 0**: La recompensa por mantener baja velocidad lineal solo existe durante la fase de estabilización pura. Durante las fases de tracking (A/B/C), el agente puede acumular inercia sin coste, lo que dificulta las correcciones posteriores.
+
+5. **R_center_vel premia la agresividad**: Este bonus recompensa explícitamente *reducir rápido* la distancia al centro (`Δd × 3.0`), lo que incentiva correcciones grandes y rápidas en lugar de aproximaciones graduales.
+
+#### Selección del checkpoint base para fine-tune
+
+Se seleccionó el checkpoint de **900k** (en lugar de 850k) como base para el fine-tune por la siguiente razón estratégica:
+
+- El fine-tune solo entrenará en condiciones de **Phase B y C** (medium y hard), ya que el objetivo es corregir la inestabilidad en esos niveles.
+- El modelo de 900k tiene **100% supervivencia en easy y medium** y los mejores rewards en esos tiers (4,332 easy, 3,810 medium). Su única debilidad es el hard tier (40%).
+- Usar 850k implicaría partir de un modelo "mediocre en todo" (80% en cada tier). Usar 900k permite partir de un modelo **excelente en easy/medium** y solo arreglar el hard con la nueva reward, sin arriesgar degradar lo que ya funciona bien.
+
+### Descripción
+
+#### Nuevo método `_compute_v3_1_reward()` — Reward con estabilidad como puerta
+
+El cambio central es hacer que la recompensa de tracking sea **multiplicativa con la estabilidad**, no aditiva. Esto garantiza que el agente no puede obtener reward alto de centering sin mantener vuelo estable.
+
+**Fórmula v3.1**:
+```python
+R_tracking = R_centering + R_center_vel + R_scale       # 0 → 6.0
+total = R_stability × (R_tracking + 0.5) + R_vel_damp + R_smooth + R_invisible
+```
+
+El término `R_stability × (R_tracking + 0.5)` funciona así:
+- **R_stability actúa como puerta/gate**: si el dron está inestable (R_stability=0.2), solo cobra el 20% del tracking reward. Si está estable (R_stability=0.95), cobra casi todo.
+- **El +0.5 es un suelo de incentivo**: garantiza que R_stability>0 siempre genere algo de reward, incluso cuando R_tracking≈0 (target no centrado o no visible momentáneamente). Sin este término, el agente perdería toda señal de "mantente estable" cuando el target no está centrado.
+- **Es equivalente a factorizar**: `R_stability × (R_tracking + 0.5)` = `R_stability × R_tracking + 0.5 × R_stability`. El primer sumando es el tracking gateado; el segundo es el suelo de estabilidad.
+
+**Ejemplo numérico del efecto**:
+
+| Escenario | v3 reward | v3.1 reward | Diferencia |
+|---|---|---|---|
+| Estable y centrado (R_stab=0.95, R_cent=4.0) | 0.95+4.0+1.0+1.0 = 6.95 | 0.95×(6.0+0.5)+0.5+0 = **6.68** | Similar |
+| Inestable pero centrado (R_stab=0.2, R_cent=4.0) | 0.2+4.0+1.0+1.0 = 6.20 | 0.2×(6.0+0.5)+0.5+0 = **1.80** | **-71%** |
+| Estable sin centrar (R_stab=0.95, R_cent=0.5) | 0.95+0.5+0+0.3 = 1.75 | 0.95×(0.8+0.5)+0.5+0 = **1.74** | Similar |
+
+La diferencia clave está en el segundo caso: el comportamiento "inestable pero centrado" que era casi igual de rentable en v3 (6.20 vs 6.95) ahora es mucho menos rentable en v3.1 (1.80 vs 6.68). El agente aprende que **debe ser estable para cobrar el centering**.
+
+#### Nuevo componente R_smooth — Penalización de jerk de acciones
+
+```python
+R_smooth = -0.3 × ||action_t - action_{t-1}||²    # rango: [-0.3, 0]
+```
+
+Penaliza cambios bruscos en los 4 motores entre steps consecutivos. El cuadrado hace que cambios pequeños sean casi gratis (Δ=0.1 → -0.003) pero cambios grandes sean caros (Δ=1.0 → -0.3). Esto fuerza al agente a hacer correcciones **graduales y suaves** en lugar de oscilaciones violentas.
+
+El peso de -0.3 se eligió para que:
+- Sea significativo comparado con el reward por step (~1-5), haciendo que el jerk tenga impacto en las decisiones del agente.
+- No sea tan grande como para paralizar al agente (que dejaría de actuar por miedo a la penalización).
+- El cuadrado concentre la penalización en los cambios extremos, permitiendo ajustes normales sin coste.
+
+Se almacena `_prev_action` en el entorno, reseteado a None en cada `reset()`. El primer step del episodio no recibe penalización (no hay acción anterior).
+
+#### Nuevo componente R_vel_damp — Amortiguación de velocidad durante tracking
+
+```python
+R_vel_damp = 0.5 × exp(-4 × ||vel||²)    # rango: [0, 0.5]
+```
+
+A diferencia de v3 que solo incluía R_vel_cancel en Phase 0 (estabilización pura), v3.1 añade una recompensa por mantener baja la velocidad lineal **también durante las fases de tracking**. Esto tiene dos efectos:
+1. **Previene acumulación de inercia**: el dron no puede coger velocidad alta al intentar centrar, lo que reducía la capacidad de corrección posterior.
+2. **Complementa R_smooth**: las acciones suaves (R_smooth) generan velocidades bajas (R_vel_damp), creando un ciclo virtuoso de control suave.
+
+El peso de 0.5 es menor que el R_vel_cancel de Phase 0 (2.0) porque durante tracking el objetivo principal sigue siendo centrar, no frenar completamente.
+
+#### Gaussiana de centering sin cambios
+
+Se mantiene `R_centering = 4.0 × exp(-6 × d²)` sin modificar. La gaussiana apretada es necesaria para que el dron centre rápido el target una vez lo encuentra. El problema no era la gaussiana en sí, sino que no estaba acoplada con la estabilidad. Con el gate multiplicativo, la gaussiana sigue siendo fuerte cuando el dron es estable (incentiva centrar rápido) pero débil cuando es inestable (incentiva estabilizar primero). Esto implementa implícitamente la secuencia deseada: **estabilizar → centrar → ajustar distancia**.
+
+#### Resumen de componentes v3.1
+
+| Componente | Rango | Descripción | Diferencia vs v3 |
+|---|---|---|---|
+| `R_stability` | 0 → 1.0 | Baja velocidad angular × bajo tilt | Sin cambio en fórmula, pero ahora es **multiplicador** del tracking |
+| `R_centering` | 0 → 4.0 | Gaussiana apretada: `4.0×exp(-6d²)` | Sin cambio, pero **gateado** por estabilidad |
+| `R_center_vel` | 0 → 1.0 | Bonus por reducir distancia al centro | Sin cambio, gateado |
+| `R_scale` | 0 → 1.0 | Fracción ideal de imagen (asimétrica) | Sin cambio, gateado |
+| `R_vel_damp` | 0 → 0.5 | Baja velocidad lineal durante tracking | **NUEVO** — previene inercia |
+| `R_smooth` | -0.3 → 0 | Penalización de jerk de acciones | **NUEVO** — suaviza control |
+| `R_invisible` | -1.0 | Penalización sin target visible | Sin cambio |
+| **Total** | ~-1.3 → 7.3 | `R_stab × (R_track + 0.5) + R_vd + R_sm + R_inv` | **Acoplamiento multiplicativo** |
+
+#### Script de fine-tune `train_hover_track_v3_1.py`
+
+Script diseñado específicamente para fine-tuning, no entrenamiento desde cero:
+
+- **Carga** el checkpoint 900k de v3 con `SAC.load()`.
+- **Vacía el replay buffer**: las transiciones almacenadas tienen rewards calculados con v3, que son incompatibles con la nueva estructura v3.1 (diferentes magnitudes y gradientes). Usar transiciones antiguas corrompería los value estimates del critic.
+- **Learning rate reducido a 1e-4** (vs 3e-4 en v3): al ser fine-tune, necesitamos actualizaciones más conservadoras para no destruir los comportamientos ya aprendidos (estabilización, detección de target, tracking en condiciones fáciles).
+- **Curriculum de 2 fases** (solo B y C, sin Phase 0 ni A):
+  - Phase B [0%, 50%): offset 0.3→0.6m, vel 0.15→0.25 m/s, ang 0.05→0.10 rad
+  - Phase C [50%, 100%]: offset 0.6→1.0m, vel 0.25→0.35 m/s, ang 0.10→0.15 rad
+- **500k timesteps** de fine-tune (estimación: ~5-8h con GPU).
+- **CSV con métricas extendidas**: incluye `r_vel_damp`, `r_smooth` y `mean_action_jerk` para monitorizar los nuevos componentes.
+- **Checkpoints cada 50k steps** para selección posterior del mejor modelo.
+- **Grabación de vídeo periódica** con timelapse al finalizar.
+
+#### Wrapper `OffsetTargetV31Wrapper`
+
+Versión simplificada del wrapper v3 que elimina el soporte de Phase 0 (stabilization_only) ya que el fine-tune nunca usa esa fase. El target siempre está visible y se le aplica offset aleatorio en XY según el curriculum.
+
+#### Evaluador `evaluate_hover_track_v3_1.py`
+
+Evaluador multi-checkpoint adaptado para v3.1:
+- Evalúa todos los checkpoints del fine-tune (cada 50k steps) + best_model.
+- 3 tiers de dificultad (easy/medium/hard) × N episodios por tier.
+- Métricas extendidas: incluye `r_vel_damp`, `r_smooth` y `action_jerk` además de las métricas v3.
+- Plots de 8 paneles (global) y 3 paneles (per-tier con jerk).
+- Salida en `experiments/hover_track_v3_1/`.
+
+#### Test de vídeo actualizado `test_hover_track_v3_video.py`
+
+Se actualizó el script de vídeo para soportar ambas versiones:
+- Nuevo argumento `--reward-version v3.1` que auto-configura paths (modelo, checkpoints, output).
+- Nuevo argumento `--model-path` para cargar directamente un .zip sin buscar en checkpoints.
+- La versión de reward se usa para crear el entorno con `reward_version='v3.1'`.
+
+### Archivos Afectados
+
+**Modificados**:
+- `src/envs/panda3d_quadrotor_env.py` — Nuevo método `_compute_v3_1_reward(action)`, atributo `_prev_action`, dispatch `'v3.1'` en `step()`
+- `tests/test_hover_track_v3_video.py` — Soporte `--reward-version v3.1`, `--model-path`, auto-configuración de paths
+- `PROJECT_HISTORY.md` — Esta entrada
+- `README.md` — Sección v3.1, tabla de modelos actualizada
+
+**Nuevos**:
+- `scripts/train_hover_track_v3_1.py` — Script completo de fine-tune con curriculum B+C, replay buffer vacío, lr=1e-4
+- `tests/evaluate_hover_track_v3_1.py` — Evaluador multi-checkpoint con métricas extendidas (jerk, vel_damp, smooth)
+
+### Resultados/Observaciones
+- Pendiente de ejecución del fine-tune y evaluación posterior.
+- El fine-tune partirá del checkpoint 900k de v3 (excelente en easy/medium, a mejorar en hard).
+- Estimación de tiempo: ~5-8h para 500k timesteps con GPU NVIDIA RTX 3050.
+- Métricas clave a vigilar durante el fine-tune: `mean_action_jerk` (debería decrecer con R_smooth), `r_stability` en Phase C (debería mantenerse alto), y supervivencia en hard tier (objetivo: ≥80%).
+
+---
+
 ### Inventario de Modelos Entrenados
 
 | Modelo | Ruta | Algoritmo | Params | Propósito |
@@ -2615,6 +2794,8 @@ El diseño de v3 es deliberadamente compatible con fine-tuning sobre target en m
 | **Spiral Follow** | `models/spiral_follow/best_model.zip` | PPO | 6,761 | Seguir espiral de Arquímedes para búsqueda de target perdido |
 | **Hover Track v1** | `models/hover_track/best_model.zip` | SAC | 56,908 | Mantener dron estático sobre target con cámara vertical (condiciones ideales) |
 | **Hover Track v2** | `models/hover_track_v2/best_model.zip` | SAC | ~160k | Hover tracking robusto: target descentrado, recuperación post-espiral. Evaluado: supervivencia 70% easy / 40% medium / 6% hard |
+| **Hover Track v3** | `models/hover_track_v3/best_model.zip` | SAC | 195,724 | Hover tracking con Phase 0 (estabilización) + centering apretado. Mejor checkpoint: 900k (100% easy, 100% medium, 40% hard) |
+| **Hover Track v3.1** | `models/hover_track_v3_1/best_model.zip` | SAC | 195,724 | Fine-tune de v3 (900k) con reward multiplicativa: estabilidad como gate del tracking + suavidad de acciones. Pendiente de entrenamiento |
 
 ---
 

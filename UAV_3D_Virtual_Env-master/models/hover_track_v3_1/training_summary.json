@@ -1,0 +1,35 @@
+{
+  "total_episodes": 337,
+  "final_mean_reward": 5199.43680926,
+  "final_phase": "C",
+  "csv_path": "models\\hover_track_v3_1\\training_log.csv",
+  "total_timesteps": 500000,
+  "training_time_seconds": 27147.793105363846,
+  "base_checkpoint": "./models/hover_track_v3/checkpoints/model_900000_steps.zip",
+  "hover_height": 1.394,
+  "algorithm": "SAC",
+  "version": "v3.1",
+  "fine_tune": true,
+  "observation_dim": 19,
+  "net_arch": [
+    256,
+    128
+  ],
+  "learning_rate": 0.0001,
+  "max_ep_steps": 3000,
+  "episode_duration_s": 30.0,
+  "reward_version": "v3.1",
+  "curriculum_phases": {
+    "B": "0-50% (moderate tracking)",
+    "C": "50%-100% (hard tracking)"
+  },
+  "v3_1_changes": [
+    "Multiplicative coupling: R_stability \u00d7 (R_tracking + 0.5)",
+    "Action smoothness penalty: -0.3 \u00d7 \u0394a\u00b2",
+    "Velocity damping: 0.5 \u00d7 exp(-4v\u00b2)",
+    "Centering Gaussian unchanged: 4.0 \u00d7 exp(-6d\u00b2)",
+    "Fine-tuned from v3 900k checkpoint",
+    "Empty replay buffer (fresh experience)"
+  ],
+  "policy_params": 195724
+}

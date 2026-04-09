@@ -275,7 +275,10 @@ class Panda3DQuadrotorEnv(gym.Env):
 
         # ── v3+ stabilization-only mode (set externally by curriculum) ──
         self.stabilization_only = False   # when True, reward ignores target
-        self.reward_version = reward_version  # 'auto', 'v2', 'v3'
+        self.reward_version = reward_version  # 'auto', 'v2', 'v3', 'v3.1'
+
+        # ── v3.1 action smoothness tracking ──
+        self._prev_action = None  # for jerk penalty in v3.1 reward
 
         # ── v3 centroid-obs mode ──
         self.hover_height = hover_height
@@ -869,6 +872,149 @@ class Panda3DQuadrotorEnv(gym.Env):
         total = r_stability + r_centering + r_center_vel + r_scale + r_invisible
         return float(total), info
 
+    # ================================================================= #
+    #  v3.1 hover-tracking reward (stability-gated + action smoothness) #
+    # ================================================================= #
+
+    def _compute_v3_1_reward(self, action):
+        """Stability-gated reward for hover-tracking v3.1.
+
+        Fine-tune reward designed to fix the instability observed in v3
+        medium/hard tiers.  Key changes over v3:
+
+        1. **Multiplicative coupling** — tracking reward is scaled by
+           stability, so aggressive corrections that destabilise the
+           drone are self-penalised.
+        2. **Action smoothness penalty** — penalises sudden motor
+           changes (jerk) to encourage gradual corrections.
+        3. **Velocity damping** — rewards low linear velocity during
+           tracking phases, preventing momentum build-up.
+
+        Phase 0 (stabilization_only=True)
+        ----------------------------------
+        Identical to v3: R_survival + R_stability + R_vel_cancel.
+
+        Phases A–C (stabilization_only=False)
+        --------------------------------------
+        R_stability    0 → 1.0   low angular velocity × low tilt
+        R_centering    0 → 4.0   tight Gaussian on centroid distance
+        R_center_vel   0 → 1.0   bonus for approaching image centre
+        R_scale        0 → 1.0   target fraction near ideal (asymmetric)
+        R_vel_damp     0 → 0.5   low linear velocity bonus
+        R_smooth      −0.3 → 0   jerk penalty (action delta)
+        R_invisible   −1.0       per step without seeing the target
+
+        Total = R_stability × (R_tracking + 0.5)
+                + R_vel_damp + R_smooth + R_invisible
+
+        where R_tracking = R_centering + R_center_vel + R_scale.
+
+        Parameters
+        ----------
+        action : np.ndarray
+            Current motor action (4-D), used for smoothness penalty.
+
+        Returns
+        -------
+        total_reward : float
+        info : dict
+        """
+        info = {}
+        state = self.base_env.state
+        ang = self.base_env.ang  # [roll, pitch, yaw]
+
+        # R_stability — always active (identical to v3)
+        ang_vel_norm = np.linalg.norm(state[10:13]) / 10.0
+        tilt_norm = (abs(ang[0]) + abs(ang[1])) / (np.pi / 2)
+        r_stability = math.exp(-3.0 * ang_vel_norm ** 2) * math.exp(-3.0 * tilt_norm ** 2)
+
+        # ── Phase 0: stabilization only (identical to v3) ────────────
+        if self.stabilization_only:
+            r_survival = 0.05
+            vel = state[1:6:2]
+            vel_norm = np.linalg.norm(vel) / 2.0
+            r_vel_cancel = 2.0 * math.exp(-5.0 * vel_norm ** 2)
+
+            total = r_survival + r_stability + r_vel_cancel
+
+            info['target_visible'] = False
+            info['r_stability'] = float(r_stability)
+            info['r_vel_cancel'] = float(r_vel_cancel)
+            info['r_centering'] = 0.0
+            info['r_scale'] = 0.0
+            info['r_invisible'] = 0.0
+            info['r_vel_damp'] = 0.0
+            info['r_smooth'] = 0.0
+            info['centering_reward'] = 0.0
+            info['scale_reward'] = 0.0
+            return float(total), info
+
+        # ── Phases A–C: stability-gated visual tracking ──────────────
+        cx, cy, frac, vis = self._detect_target_in_image()
+
+        r_centering = 0.0
+        r_center_vel = 0.0
+        r_scale = 0.0
+        r_invisible = 0.0
+        target_visible = vis > 0
+
+        if target_visible:
+            self._target_ever_seen = True
+
+            # R_centering — tight Gaussian (same as v3)
+            dist_from_center = math.sqrt(cx ** 2 + cy ** 2)
+            r_centering = 4.0 * math.exp(-6.0 * dist_from_center ** 2)
+
+            # R_center_vel — bonus for reducing distance to centre
+            delta = self._prev_centering_dist - dist_from_center
+            r_center_vel = max(0.0, min(1.0, 3.0 * delta))
+            self._prev_centering_dist = dist_from_center
+
+            # R_scale — asymmetric Gaussian (same as v3)
+            fraction_error = abs(frac - self.ideal_fraction)
+            sigma = 0.12 if frac <= self.ideal_fraction else 0.06
+            r_scale = 1.0 * math.exp(-0.5 * (fraction_error / sigma) ** 2)
+
+            info['target_fraction'] = float(frac)
+            info['fraction_error'] = float(fraction_error)
+            info['target_center'] = (cx, cy)
+            info['centering_dist'] = float(dist_from_center)
+        else:
+            r_invisible = -1.0
+            self._prev_centering_dist = 0.0
+
+        # R_vel_damp — reward low linear velocity during tracking
+        vel = state[1:6:2]
+        vel_norm = np.linalg.norm(vel) / 2.0
+        r_vel_damp = 0.5 * math.exp(-4.0 * vel_norm ** 2)
+
+        # R_smooth — penalise sudden action changes (jerk)
+        r_smooth = 0.0
+        if self._prev_action is not None:
+            action_delta = float(np.linalg.norm(
+                np.asarray(action) - self._prev_action))
+            r_smooth = -0.3 * action_delta ** 2
+        self._prev_action = np.asarray(action, dtype=np.float32).copy()
+
+        # ── Multiplicative coupling ──
+        # Stability gates all tracking rewards; base bonus 0.5 for hovering
+        r_tracking = r_centering + r_center_vel + r_scale
+        total = (r_stability * (r_tracking + 0.5)
+                 + r_vel_damp + r_smooth + r_invisible)
+
+        info['target_visible'] = target_visible
+        info['r_stability'] = float(r_stability)
+        info['r_centering'] = float(r_centering)
+        info['r_center_vel'] = float(r_center_vel)
+        info['r_scale'] = float(r_scale)
+        info['r_vel_damp'] = float(r_vel_damp)
+        info['r_smooth'] = float(r_smooth)
+        info['r_invisible'] = float(r_invisible)
+        info['scale_reward'] = float(r_scale)
+        info['centering_reward'] = float(r_centering)
+
+        return float(total), info
+
     def _setup_collision_system(self):
         """Setup the collision detection system."""
         if self.quad_model is None or self.render_node is None:
@@ -1152,6 +1298,7 @@ class Panda3DQuadrotorEnv(gym.Env):
         if self.centroid_obs:
             self._prev_centroid[:] = 0.0
             self._prev_centering_dist = 0.0
+        self._prev_action = None
 
         if self.use_target:
             self._target_ever_seen = False
@@ -1237,7 +1384,9 @@ class Panda3DQuadrotorEnv(gym.Env):
         
         # Visual tracking reward (dense, per-step)
         if self.use_target and self.use_camera:
-            if self.reward_version == 'v3':
+            if self.reward_version == 'v3.1':
+                visual_reward, visual_info = self._compute_v3_1_reward(action)
+            elif self.reward_version == 'v3':
                 visual_reward, visual_info = self._compute_v3_reward()
             elif self.centroid_obs:
                 visual_reward, visual_info = self._compute_hover_reward()

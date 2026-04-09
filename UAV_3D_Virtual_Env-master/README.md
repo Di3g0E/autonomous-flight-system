@@ -307,6 +307,43 @@ python scripts/train_hover_track_v2.py --timesteps 500000 --no-display
 
 Tres fases de curriculum progresivo: target offset ±0.1→1.0m, velocidad lateral ±0.10→0.35 m/s, tilt ±0.05→0.15 rad. El modelo original v1 no se modifica.
 
+### Hover Track v3 — Fase 0 de Estabilización + Centering Apretado
+
+Curriculum de 4 fases con Phase 0 de estabilización pura (sin target) para aprender control motor básico antes del tracking visual. Gaussiana de centering más estrecha (`4.0×exp(-6d²)`) y episodios de 30s.
+
+```bash
+# Entrenar v3 (1.5M steps, ~15h con GPU)
+python scripts/train_hover_track_v3.py --timesteps 1500000 --no-display
+
+# Evaluar checkpoints v3
+python tests/evaluate_hover_track_v3.py --no-display
+```
+
+### Hover Track v3.1 — Reward Multiplicativa (Estabilidad como Gate)
+
+Fine-tune del modelo v3 (checkpoint 900k) que corrige la inestabilidad observada en los tiers medium y hard. El problema era que la reward aditiva v3 permitía obtener reward alto de centering (max 4.0) sin necesidad de ser estable (max 1.0).
+
+**Solución**: la reward de tracking ahora se multiplica por la estabilidad:
+
+```
+total = R_stability × (R_centering + R_center_vel + R_scale + 0.5) + R_vel_damp + R_smooth + R_invisible
+```
+
+Nuevos componentes:
+- **R_smooth**: `-0.3 × ||Δaction||²` — penaliza cambios bruscos de motores
+- **R_vel_damp**: `0.5 × exp(-4v²)` — recompensa velocidad lineal baja durante tracking
+
+```bash
+# Fine-tune v3.1 desde checkpoint 900k (500k steps, ~5-8h con GPU)
+python scripts/train_hover_track_v3_1.py --no-display
+
+# Evaluar checkpoints v3.1
+python tests/evaluate_hover_track_v3_1.py --no-display
+
+# Grabar vídeo del modelo v3.1
+python tests/test_hover_track_v3_video.py --reward-version v3.1
+```
+
 ---
 
 ## Pipeline Espiral-a-Hover (Búsqueda y Estabilización)
@@ -335,6 +372,8 @@ El controlador garantiza que el SAC nunca actúa con el target invisible y que e
 | Spiral Follow | `models/spiral_follow/best_model.zip` | PPO | Seguir espiral de Arquímedes para búsqueda de target perdido |
 | Hover Track v1 | `models/hover_track/best_model.zip` | SAC | Hover estático sobre target (condiciones ideales, target centrado) |
 | Hover Track v2 | `models/hover_track_v2/best_model.zip` | SAC | Hover robusto: target descentrado, recuperación post-espiral |
+| Hover Track v3 | `models/hover_track_v3/best_model.zip` | SAC | Phase 0 estabilización + centering apretado (4 fases) |
+| Hover Track v3.1 | `models/hover_track_v3_1/best_model.zip` | SAC | Fine-tune de v3: reward multiplicativa (estabilidad como gate) |
 | Lemniscate v2 | `models/lemniscate_v2/interrupted_model.zip` | PPO | Seguir trayectoria en ∞ (interrumpido, parcial) |
 
 ---
