@@ -17,37 +17,70 @@ Esta base sólida permitió probar algoritmos en un entorno simulado antes de su
 
 # Cómo Empezar (Instalación y Ejecución)
 
-Este proyecto requiere Python 3.10+. Se recomienda el uso de [uv](https://github.com/astral-sh/uv) para una gestión de dependencias mucho más rápida.
-
-### 1. Configuración del Entorno (con `uv`)
-Si es la primera vez que configuras el proyecto o quieres recrear el entorno `.v`:
+Este proyecto requiere Python 3.13+. Se recomienda el uso de [uv](https://github.com/astral-sh/uv) para una gestión de dependencias mucho más rápida.
 
 ```powershell
-# Crear el entorno virtual .v (si no existe) e instalar dependencias
-uv venv .v --python 3.10
-.\.v\Scripts\activate
+# Situarse en la raiz del proyecto
+cd UAV_3D_Virtual_Env-master
+```
+
+### 1. Configuración del Entorno (con `uv`)
+Si es la primera vez que configuras el proyecto o quieres recrear el entorno `.venv`:
+
+```powershell
+# Crear el entorno virtual .venv (si no existe) e instalar dependencias
+uv venv .venv --python 3.13
+.venv\Scripts\activate
 uv pip install -e .[all]
 ```
 
-### 2. Método Tradicional (Venv + Pip)
+### 2. Método Tradicional (Venv + Pip) — CPU
 Si no utilizas `uv`, puedes seguir el método estándar:
 
-#### Activar el Entorno Virtual
-```powershell
-# En Windows (PowerShell)
-.\.v\Scripts\activate
-```
-
-#### Instalar el Proyecto
 ```powershell
 # Habilitar rutas largas en Windows (ejecutar como ADMIN si da error de rutas largas)
 # New-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+
+# Crear entorno virtual
+python -m venv .venv
+
+# Activar
+.\.venv\Scripts\activate
 
 # Instalación completa
 pip install -e .[all]
 ```
 
-### 3. Ejecutar el Programa Principal
+### 3. Instalación con GPU (CUDA) — Recomendado para Entrenamiento
+
+Para entrenamientos largos, es recomendable usar la GPU. Requiere una GPU NVIDIA con drivers CUDA instalados (verificar con `nvidia-smi`).
+
+```powershell
+# 1. Crear entorno virtual dedicado para GPU
+python -m venv .vgpu
+
+# 2. Activar
+.vgpu\Scripts\activate
+
+# 3. Instalar PyTorch con CUDA PRIMERO (antes que cualquier otra dependencia)
+#    Adaptar cu128 a tu version de CUDA (ver "CUDA Version" en nvidia-smi)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+# 4. Instalar resto de dependencias
+pip install -r requirements-gpu.txt
+
+# 5. Instalar el proyecto en modo editable
+pip install -e .[all]
+
+# 6. Verificar que CUDA funciona
+python -c "import torch; print('CUDA:', torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+> **Importante**: El paso 3 debe ejecutarse antes del 4 y 5 para evitar que pip sobreescriba PyTorch CUDA con la versión CPU.
+
+Probado con: Python 3.13, NVIDIA RTX 3050 (4GB VRAM), Driver 572.16, CUDA 12.8.
+
+### 4. Ejecutar el Programa Principal
 Una vez activado el entorno, lanza la simulación 3D:
 
 ```powershell

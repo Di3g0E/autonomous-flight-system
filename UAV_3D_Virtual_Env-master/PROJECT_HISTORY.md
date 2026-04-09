@@ -187,6 +187,7 @@ Simplificar la configuración del proyecto para nuevos desarrolladores y asegura
 ### Resultados/Observaciones
 - **Instalación Verificada**: Se ha verificado que las dependencias se instalan correctamente en un entorno limpio (Python 3.13 tested).
 - **Pruebas de Ejecución**: Se ha confirmado que `test_gym_wrapper.py` se ejecuta correctamente dentro del nuevo entorno, validando la compatibilidad con Gymnasium y Stable-Baselines3.
+- **Elección de Python 3.13**: Se optó por Python 3.13 frente a 3.10 (recomendación del repositorio original) porque todas las dependencias del proyecto (PyTorch 2.10+, Panda3D 1.10.16, SB3 2.7+, NumPy 2.4+) disponen de wheels compatibles, y Python 3.10 pierde soporte oficial de seguridad en octubre de 2026, coincidiendo con la fecha de presentación del TFG.
 - **Notas de Compatibilidad**: Se recomienda el uso de una ruta corta para el entorno virtual en Windows para evitar el error `[WinError 206]`.
 
 ---
@@ -2539,6 +2540,67 @@ Evaluador multi-episodio que ejecuta N episodios en tres tiers de dificultad (Ea
 - La fracción del objetivo en imagen (0.076 vs ideal 0.25) es la debilidad más consistente: el modelo no aprendió a controlar la altitud para mantener la escala correcta.
 - La evaluación con 150 episodios fue fundamental para obtener resultados fiables — la ejecución previa con 30 episodios producía conclusiones erróneas sobre la relación medium/hard.
 - Decisión: las recomendaciones para v3 se implementarán en la siguiente sesión, priorizando la recuperación inicial y el peso de R_scale.
+
+---
+
+## [Fecha: 2026-04-06] - Hover Track v3: Fase 0 de Estabilización, Recompensa Mejorada y Entorno GPU
+
+### Motivación
+El modelo hover_track_v2 mostraba debilidades claras en la evaluación: supervivencia del 6% en condiciones difíciles, centering_dist media de 0.63 (lejos del ideal ~0.2-0.3) y fracción de imagen 0.076 vs ideal 0.25. La causa raíz es que el agente nunca aprendió a estabilizarse antes de intentar hacer tracking visual, y la gaussiana de centrado era demasiado permisiva. Además, el entrenamiento usaba PyTorch CPU, lo que implicaba tiempos de entrenamiento innecesariamente largos.
+
+### Descripción
+
+#### Entorno GPU (`.vgpu`)
+- **Problema detectado**: PyTorch instalado era `2.10.0+cpu` — la GPU (NVIDIA RTX 3050, 4GB VRAM, Driver 572.16, CUDA 12.8) no se utilizaba.
+- **Causa**: `pip install torch` por defecto instala la versión CPU. Para CUDA hay que usar `--index-url https://download.pytorch.org/whl/cu128`.
+- **Solución**: Nuevo entorno virtual `.vgpu` con `torch==2.11.0+cu128`. Se creó un archivo `requirements-gpu.txt` con las instrucciones de instalación en orden correcto (PyTorch CUDA primero, luego el resto).
+- **Versión de Python**: Se verificó que ambos entornos (`.venv` y `.vgpu`) usan Python 3.13.0. El README anterior recomendaba Python 3.10, pero todas las dependencias actuales (Panda3D 1.10.16, PyTorch 2.11, SB3 2.8, NumPy 2.4) soportan 3.13 sin problemas. Se actualizó el README a `Python 3.13+`.
+- **Impacto estimado**: Mejora del 30-50% en tiempo total de entrenamiento (el cuello de botella sigue siendo el rendering de Panda3D en CPU).
+
+#### Hover Track v3 — Curriculum de 4 fases
+Nuevo script de entrenamiento `train_hover_track_v3.py` con las siguientes mejoras sobre v2:
+
+**Fase 0 (0%–8%): Estabilización pura (sin objetivo)**
+- El target se mueve fuera del campo de visión de la cámara.
+- Recompensa: solo `R_survival + 2·R_stability + 2·R_vel_cancel`.
+- `R_vel_cancel = 2.0 × exp(−5 × ||vel||²)` — incentiva cancelar velocidad lineal.
+- Perturbaciones progresivas: vel 0.15→0.35 m/s, ang 0.05→0.15 rad.
+- El agente aprende una "base motora" antes de intentar servoing visual.
+
+**Fases A/B/C (8%–100%): Tracking visual mejorado**
+- `R_centering` más estrecha: `4.0 × exp(−6 × d²)` vs `2.0 × exp(−3 × d²)` en v2. Sigma efectivo 0.41 vs 0.58 — cae mucho más rápido al descentrar.
+- Nuevo `R_center_vel`: bonus por reducir la distancia al centro (derivada negativa). Clamped a [0, 1].
+- `R_scale` sin cambios (gaussiana asimétrica, ya funcionaba bien).
+- Episodios de 30s (3000 steps) vs 15s en v2, para más práctica de recuperación.
+
+**Nuevo método `_compute_v3_reward()` en `panda3d_quadrotor_env.py`:**
+- Flag `stabilization_only` controlado dinámicamente por el curriculum.
+- `reward_version='v3'` en constructor selecciona la nueva función de recompensa.
+- Search timeout desactivado durante Phase 0 (no hay target que buscar).
+
+#### Grabación de vídeos durante entrenamiento
+- `VideoRecordCallback`: graba 1 episodio cada N episodios (configurable con `--record-interval`) + automáticamente en transiciones de fase.
+- Cámara externa bird's-eye añadida al script de entrenamiento.
+- Cada episodio grabado: FPV + vista exterior con overlays de métricas.
+- Al finalizar: compilación automática de timelapse (`training_timelapse.mp4`).
+- Compatible con `--no-display` (rendering offscreen).
+
+#### Compatibilidad con v4 (target móvil)
+El diseño de v3 es deliberadamente compatible con fine-tuning sobre target en movimiento:
+- Mismo espacio de observación (19-D) y acción (4-D) que v2.
+- Misma arquitectura de red [256, 128].
+- `dcx`/`dcy` en la observación capturan tanto movimiento del dron como del target.
+- Trayectoria lemniscata ya implementada en el entorno (`target_mode='moving'`).
+
+### Archivos Afectados
+- `src/envs/panda3d_quadrotor_env.py` (Modificado) — `_compute_v3_reward()`, `stabilization_only`, `reward_version`, `_prev_centering_dist`
+- `scripts/train_hover_track_v3.py` (Nuevo) — Script completo con 4 fases, grabación de vídeo, cámara externa
+- `requirements-gpu.txt` (Nuevo) — Dependencias para entorno con CUDA
+- `README.md` (Modificado) — Sección de instalación GPU, versión Python actualizada a 3.13+
+
+### Resultados/Observaciones
+- Pendiente de entrenamiento y evaluación. Estimación: ~24h para 1M timesteps con GPU (sin display).
+- El entrenamiento v2 en curso (en `.venv` CPU) no se ve afectado por la creación del nuevo entorno.
 
 ---
 

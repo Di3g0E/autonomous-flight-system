@@ -82,6 +82,8 @@ class Panda3DQuadrotorEnv(gym.Env):
         hover_height=1.394,
         camera_down=False,
         exclude_low_freq_camera=False,
+        # ── v3+ reward selection ──
+        reward_version='auto',  # 'auto', 'v2', 'v3'
     ):
         """
         Initialize the Panda3D Quadrotor Environment.
@@ -269,6 +271,11 @@ class Panda3DQuadrotorEnv(gym.Env):
         self.init_vel_range = init_vel_range
         self.init_ang_range = init_ang_range
         self._target_visible_last_step = False  # for discovery bonus
+        self._prev_centering_dist = 0.0  # for centering velocity reward
+
+        # ── v3+ stabilization-only mode (set externally by curriculum) ──
+        self.stabilization_only = False   # when True, reward ignores target
+        self.reward_version = reward_version  # 'auto', 'v2', 'v3'
 
         # ── v3 centroid-obs mode ──
         self.hover_height = hover_height
@@ -750,6 +757,118 @@ class Panda3DQuadrotorEnv(gym.Env):
         total = r_stability + r_centering + r_scale + r_invisible
         return float(total), info
 
+    # ================================================================= #
+    #  v3+ hover-tracking reward (stabilization-aware + tighter center)  #
+    # ================================================================= #
+
+    def _compute_v3_reward(self):
+        """Enhanced reward for hover-tracking v3 with stabilization-only mode.
+
+        When ``self.stabilization_only`` is True (Phase 0 of curriculum),
+        the target is ignored and the agent is rewarded purely for
+        cancelling velocity and tilt — learning a motor "base skill"
+        before attempting visual tracking.
+
+        When stabilization_only is False (Phases A–C), this is an
+        improved version of ``_compute_hover_reward`` with:
+        * Tighter centering Gaussian  (4.0 × exp(−6 d²) vs 2.0 × exp(−3 d²))
+        * Centering velocity bonus    (reward for reducing dist_from_center)
+        * Explicit velocity-cancel component in R_stability
+
+        Components — stabilization_only=True
+        -------------------------------------
+        R_survival    +0.05
+        R_stability   0 → +1.0   low angular velocity × low tilt
+        R_vel_cancel  0 → +2.0   low linear velocity (encourages hover)
+
+        Components — stabilization_only=False
+        --------------------------------------
+        R_stability   0 → +1.0   low angular velocity × low tilt
+        R_centering   0 → +4.0   tighter Gaussian on centroid distance
+        R_center_vel  0 → +1.0   bonus for approaching image centre
+        R_scale       0 → +1.0   target fraction near ideal (asymmetric)
+        R_invisible   −1.0       per step without seeing the target
+
+        Returns
+        -------
+        total_reward : float
+        info : dict
+        """
+        info = {}
+        state = self.base_env.state
+        ang = self.base_env.ang  # [roll, pitch, yaw]
+
+        # R_stability — always active
+        ang_vel_norm = np.linalg.norm(state[10:13]) / 10.0
+        tilt_norm = (abs(ang[0]) + abs(ang[1])) / (np.pi / 2)
+        r_stability = math.exp(-3.0 * ang_vel_norm ** 2) * math.exp(-3.0 * tilt_norm ** 2)
+
+        # ── Phase 0: stabilization only (no visual tracking) ──────────
+        if self.stabilization_only:
+            r_survival = 0.05
+            # R_vel_cancel — reward for low linear velocity
+            vel = state[1:6:2]  # [vx, vy, vz]
+            vel_norm = np.linalg.norm(vel) / 2.0  # normalise (2 m/s → 1.0)
+            r_vel_cancel = 2.0 * math.exp(-5.0 * vel_norm ** 2)
+
+            total = r_survival + r_stability + r_vel_cancel
+
+            info['target_visible'] = False
+            info['r_stability'] = float(r_stability)
+            info['r_vel_cancel'] = float(r_vel_cancel)
+            info['r_centering'] = 0.0
+            info['r_scale'] = 0.0
+            info['r_invisible'] = 0.0
+            info['centering_reward'] = 0.0
+            info['scale_reward'] = 0.0
+            return float(total), info
+
+        # ── Phases A–C: visual tracking with tighter centering ────────
+        cx, cy, frac, vis = self._detect_target_in_image()
+
+        r_centering = 0.0
+        r_center_vel = 0.0
+        r_scale = 0.0
+        r_invisible = 0.0
+        target_visible = vis > 0
+
+        if target_visible:
+            self._target_ever_seen = True
+
+            # R_centering — TIGHTER Gaussian (σ_eff ≈ 0.41 vs 0.58 in v2)
+            dist_from_center = math.sqrt(cx ** 2 + cy ** 2)  # [0, √2]
+            r_centering = 4.0 * math.exp(-6.0 * dist_from_center ** 2)
+
+            # R_center_vel — bonus for reducing distance to centre
+            delta = self._prev_centering_dist - dist_from_center
+            r_center_vel = max(0.0, min(1.0, 3.0 * delta))
+            self._prev_centering_dist = dist_from_center
+
+            # R_scale — asymmetric Gaussian (unchanged from v2)
+            fraction_error = abs(frac - self.ideal_fraction)
+            sigma = 0.12 if frac <= self.ideal_fraction else 0.06
+            r_scale = 1.0 * math.exp(-0.5 * (fraction_error / sigma) ** 2)
+
+            info['target_fraction'] = float(frac)
+            info['fraction_error'] = float(fraction_error)
+            info['target_center'] = (cx, cy)
+            info['centering_dist'] = float(dist_from_center)
+        else:
+            r_invisible = -1.0
+            self._prev_centering_dist = 0.0  # reset on lost target
+
+        info['target_visible'] = target_visible
+        info['r_stability'] = float(r_stability)
+        info['r_centering'] = float(r_centering)
+        info['r_center_vel'] = float(r_center_vel)
+        info['r_scale'] = float(r_scale)
+        info['r_invisible'] = float(r_invisible)
+        info['scale_reward'] = float(r_scale)
+        info['centering_reward'] = float(r_centering)
+
+        total = r_stability + r_centering + r_center_vel + r_scale + r_invisible
+        return float(total), info
+
     def _setup_collision_system(self):
         """Setup the collision detection system."""
         if self.quad_model is None or self.render_node is None:
@@ -1032,6 +1151,7 @@ class Panda3DQuadrotorEnv(gym.Env):
         # Randomize target if in goal mode
         if self.centroid_obs:
             self._prev_centroid[:] = 0.0
+            self._prev_centering_dist = 0.0
 
         if self.use_target:
             self._target_ever_seen = False
@@ -1117,7 +1237,9 @@ class Panda3DQuadrotorEnv(gym.Env):
         
         # Visual tracking reward (dense, per-step)
         if self.use_target and self.use_camera:
-            if self.centroid_obs:
+            if self.reward_version == 'v3':
+                visual_reward, visual_info = self._compute_v3_reward()
+            elif self.centroid_obs:
                 visual_reward, visual_info = self._compute_hover_reward()
             elif self.use_new_reward:
                 visual_reward, visual_info = self._compute_new_reward()
@@ -1127,7 +1249,8 @@ class Panda3DQuadrotorEnv(gym.Env):
             info['visual_tracking'] = visual_info
         
         # Search timeout: truncate if target was never seen after 7s
-        if (self.use_target and 
+        # (skip in stabilization-only mode — no target to find)
+        if (self.use_target and not self.stabilization_only and
                 self._step_counter >= self.search_timeout_steps and
                 not self._target_ever_seen):
             truncated = True

@@ -1,0 +1,37 @@
+# Requirements para entrenamiento con GPU (CUDA 12.8)
+#
+# Uso:
+#   1. Crear entorno:  python -m venv .vgpu
+#   2. Activar:        .vgpu\Scripts\activate
+#   3. Instalar torch:  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+#   4. Instalar resto:  pip install -r requirements-gpu.txt
+#   5. Instalar proyecto: pip install -e .[all]
+#
+# IMPORTANTE: Instalar PyTorch con CUDA (paso 3) ANTES de este archivo
+#             para evitar que pip sobreescriba con la version CPU.
+#
+# Probado con: Python 3.13, NVIDIA RTX 3050 (4GB), Driver 572.16, CUDA 12.8
+
+# -- Core ML (torch ya instalado con CUDA en paso 3) --
+stable-baselines3[extra]>=2.7.0
+tensorboard>=2.20.0
+
+# -- Entorno de simulacion --
+gymnasium>=1.2.0
+Panda3D==1.10.16
+numpy>=2.0.0
+scipy>=1.12.0
+opencv-python>=4.10.0
+matplotlib>=3.8.0
+
+# -- Extras usados en scripts --
+pandas>=2.0.0
+psutil>=5.9.0
+pygame>=2.6.0
+
+# -- Desarrollo (opcional, incluido en pip install -e .[all]) --
+# pytest>=9.0.0
+# pytest-cov>=7.0.0
+# black>=26.0.0
+# isort>=7.0.0
+# flake8>=7.0.0

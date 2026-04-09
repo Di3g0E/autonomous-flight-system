@@ -1,0 +1,33 @@
+{
+  "total_episodes": 1075,
+  "final_mean_reward": 4958.88955306,
+  "final_phase": "C",
+  "csv_path": "models\\hover_track_v3\\training_log.csv",
+  "total_timesteps": 1500000,
+  "training_time_seconds": 54091.46469092369,
+  "hover_height": 1.394,
+  "algorithm": "SAC",
+  "version": "v3",
+  "observation_dim": 19,
+  "net_arch": [
+    256,
+    128
+  ],
+  "max_ep_steps": 3000,
+  "episode_duration_s": 30.0,
+  "reward_version": "v3",
+  "curriculum_phases": {
+    "0": "0-8% (stabilisation)",
+    "A": "8%-28%",
+    "B": "28%-65%",
+    "C": "65%-100%"
+  },
+  "v3_changes": [
+    "Phase 0: stabilisation-only (no target)",
+    "Tighter centering Gaussian (4.0*exp(-6*d^2))",
+    "Centering velocity bonus",
+    "Velocity-cancel reward in Phase 0",
+    "30s episodes (3000 steps)"
+  ],
+  "policy_params": 195724
+}
