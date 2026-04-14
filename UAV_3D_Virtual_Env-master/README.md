@@ -134,6 +134,22 @@ python tests/test_spawn_positions.py
 
 # Evaluar un agente ya entrenado
 python scripts/evaluate_sb3.py
+
+# Entrenar hover tracking v3.1 (fine-tune desde v3/900k)
+python scripts/train_hover_track_v3_1.py --no-display
+
+# Evaluar checkpoints v3.1
+python tests/evaluate_hover_track_v3_1.py --no-display
+
+# Test espiral + SAC v3.1 con target móvil
+python tests/test_spiral_track_v3_1.py --no-display
+
+# Entrenar hover tracking v4 (fine-tune desde v3.1/400k, target móvil)
+python scripts/train_hover_track_v4.py \
+    --base-checkpoint ./models/hover_track_v3_1/checkpoints/model_400000_steps.zip
+
+# Evaluar checkpoints v4
+python tests/evaluate_hover_track_v4.py --no-display
 ```
 
 ---
@@ -334,14 +350,47 @@ Nuevos componentes:
 - **R_vel_damp**: `0.5 × exp(-4v²)` — recompensa velocidad lineal baja durante tracking
 
 ```bash
-# Fine-tune v3.1 desde checkpoint 900k (500k steps, ~5-8h con GPU)
+# Fine-tune v3.1 desde checkpoint 900k (500k steps, ~7.5h con GPU)
 python scripts/train_hover_track_v3_1.py --no-display
 
 # Evaluar checkpoints v3.1
 python tests/evaluate_hover_track_v3_1.py --no-display
 
-# Grabar vídeo del modelo v3.1
-python tests/test_hover_track_v3_video.py --reward-version v3.1
+# Test integración espiral+SAC con target móvil (lemniscata)
+python tests/test_spiral_track_v3_1.py --no-display
+```
+
+**Resultados de evaluación (checkpoint 400k — mejor modelo)**:
+| Tier | Supervivencia | Jerk | Estabilidad |
+|---|---|---|---|
+| Easy (off=0.3m) | 100% | 0.134 | 0.9965 |
+| Medium (off=0.6m) | 100% | 0.138 | 0.9879 |
+| Hard (off=1.0m) | 80% | 0.097 | 0.9864 |
+
+### Hover Track v4 — Fine-Tune con Objetivo Móvil
+
+Fine-tune del modelo v3.1 (checkpoint 400k) con target en movimiento (lemniscata). Primer entrenamiento del proyecto con objetivo dinámico para el controlador SAC. El pipeline se simplifica eliminando los estados BRAKE y HANDOFF — el curriculum Phase C cubre esas condiciones implícitamente.
+
+**Pipeline simplificado**:
+```
+SEARCH (PPO espiral) ←→ TRACK (SAC v4)
+  k=20 steps sin target         target visible
+```
+
+**Curriculum de 3 fases**:
+| Fase | Progreso | Velocidad target | Offset | Vel. init |
+|---|---|---|---|---|
+| A | 0%–30% | 0.05→0.15 m/s | 0.2→0.4m | 0.10→0.15 m/s |
+| B | 30%–65% | 0.15→0.25 m/s | 0.4→0.7m | 0.15→0.30 m/s |
+| C | 65%–100% | 0.25→0.40 m/s | 0.7→1.2m | 0.30→0.60 m/s |
+
+```bash
+# Fine-tune v4 (750k steps) usando el mejor checkpoint v3.1
+python scripts/train_hover_track_v4.py \
+    --base-checkpoint ./models/hover_track_v3_1/checkpoints/model_400000_steps.zip
+
+# Evaluar checkpoints v4 con tiers de velocidad
+python tests/evaluate_hover_track_v4.py --no-display
 ```
 
 ---
@@ -373,7 +422,8 @@ El controlador garantiza que el SAC nunca actúa con el target invisible y que e
 | Hover Track v1 | `models/hover_track/best_model.zip` | SAC | Hover estático sobre target (condiciones ideales, target centrado) |
 | Hover Track v2 | `models/hover_track_v2/best_model.zip` | SAC | Hover robusto: target descentrado, recuperación post-espiral |
 | Hover Track v3 | `models/hover_track_v3/best_model.zip` | SAC | Phase 0 estabilización + centering apretado (4 fases) |
-| Hover Track v3.1 | `models/hover_track_v3_1/best_model.zip` | SAC | Fine-tune de v3: reward multiplicativa (estabilidad como gate) |
+| Hover Track v3.1 | `models/hover_track_v3_1/checkpoints/model_400000_steps.zip` | SAC | Fine-tune de v3: reward multiplicativa. **Mejor checkpoint: 400k** (93.3% surv, jerk=0.123) |
+| Hover Track v4 | `models/hover_track_v4/best_model.zip` | SAC | Fine-tune de v3.1 (400k) con objetivo móvil en lemniscata (pendiente) |
 | Lemniscate v2 | `models/lemniscate_v2/interrupted_model.zip` | PPO | Seguir trayectoria en ∞ (interrumpido, parcial) |
 
 ---

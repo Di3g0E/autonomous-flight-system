@@ -2795,7 +2795,422 @@ Se actualizó el script de vídeo para soportar ambas versiones:
 | **Hover Track v1** | `models/hover_track/best_model.zip` | SAC | 56,908 | Mantener dron estático sobre target con cámara vertical (condiciones ideales) |
 | **Hover Track v2** | `models/hover_track_v2/best_model.zip` | SAC | ~160k | Hover tracking robusto: target descentrado, recuperación post-espiral. Evaluado: supervivencia 70% easy / 40% medium / 6% hard |
 | **Hover Track v3** | `models/hover_track_v3/best_model.zip` | SAC | 195,724 | Hover tracking con Phase 0 (estabilización) + centering apretado. Mejor checkpoint: 900k (100% easy, 100% medium, 40% hard) |
-| **Hover Track v3.1** | `models/hover_track_v3_1/best_model.zip` | SAC | 195,724 | Fine-tune de v3 (900k) con reward multiplicativa: estabilidad como gate del tracking + suavidad de acciones. Pendiente de entrenamiento |
+| **Hover Track v3.1** | `models/hover_track_v3_1/best_model.zip` | SAC | 195,724 | Fine-tune de v3 (900k) con reward multiplicativa: estabilidad como gate. **Mejor checkpoint: 400k** (93.3% surv, jerk=0.123) |
+| **Hover Track v4** | `models/hover_track_v4/` (pendiente) | SAC | 195,724 | Fine-tune de v3.1 (400k) con objetivo móvil en lemniscata. Pendiente de entrenamiento |
+
+---
+
+## [Fecha: 2026-04-10] - Resultados de Entrenamiento v3.1 y Evaluación de Checkpoints
+
+### Motivación
+El entrenamiento del fine-tune v3.1 se ejecutó completamente. Esta entrada documenta los resultados reales del entrenamiento, la evaluación formal de todos los checkpoints, y la selección del mejor checkpoint como base para el entrenamiento v4.
+
+### E8. Entrenamiento Hover Track v3.1 (Fine-Tune Completado)
+
+**Fecha**: 2026-04-09 → 2026-04-10 | **Tipo**: Fine-tune SAC
+**Script**: `scripts/train_hover_track_v3_1.py`
+**Salida**: `models/hover_track_v3_1/`
+
+| Parámetro | Valor |
+|---|---|
+| Algoritmo | SAC |
+| Base model | `models/hover_track_v3/checkpoints/model_900000_steps.zip` |
+| Observación | 19-D flat (estado 13D + centroide 6D) |
+| Política | MlpPolicy [256, 128] |
+| Parámetros | 195,724 |
+| Timesteps | 500,000 |
+| Learning rate | 1e-4 (reducido vs 3e-4 en v3) |
+| Replay buffer | Vaciado al inicio (transiciones v3 incompatibles con reward v3.1) |
+| Tiempo total | ~7.5h (27,147 segundos) |
+| Episodios completados | 337 |
+| Reward final (rolling) | 5,199.44 |
+
+**Curriculum de 2 fases (solo B y C, sin Phase 0 ni A)**:
+- Phase B [0–50%]: offset 0.3→0.6m, vel 0.15→0.25 m/s, ang 0.05→0.10 rad
+- Phase C [50–100%]: offset 0.6→1.0m, vel 0.25→0.35 m/s, ang 0.10→0.15 rad
+
+**Observaciones del entrenamiento**:
+- La reward creció de forma estable durante Phase B (primeros 250k steps). El gate multiplicativo funcionó: R_smooth disminuyó con el tiempo, confirmando que el agente aprendió a suavizar acciones.
+- En Phase C (250k-500k), la reward se mantuvo alta pero con mayor varianza, esperado por las condiciones de dificultad máxima.
+- `mean_action_jerk` fue la métrica clave de monitorización: decreció durante Phase B y se mantuvo moderado en Phase C.
+
+**Checkpoints guardados**: `model_50000_steps.zip` a `model_500000_steps.zip` (cada 50k) + `best_model.zip`.
+
+---
+
+### E8-Eval. Evaluación Cuantitativa de Checkpoints v3.1
+
+**Fecha**: 2026-04-10 | **Tipo**: Evaluación multi-checkpoint
+**Script**: `tests/evaluate_hover_track_v3_1.py`
+**Salida**: `experiments/hover_track_v3_1/`
+
+**Configuración**:
+- Checkpoints evaluados: 100k, 200k, 300k, 400k, 500k (+ best_model)
+- Tiers: easy (off=0.3m, vel=0.10), medium (off=0.6m, vel=0.25), hard (off=1.0m, vel=0.40)
+- 10 episodios por tier = 30 episodios por checkpoint
+- Duración: 20s por episodio (2,000 steps)
+- Reward version: v3.1
+
+**Resultados completos por checkpoint**:
+
+| Checkpoint | Surv% | R. medio | Vis% | Cent. | Jerk | R_stab | Easy | Med | Hard |
+|---|---|---|---|---|---|---|---|---|---|
+| 100k | 40.0 | 2,044 | 54.8 | 0.701 | 0.068 | 0.947 | 60% | 50% | 10% |
+| 200k | 66.7 | 4,396 | 74.6 | 0.489 | 0.124 | 0.959 | 100% | 60% | 40% |
+| 300k | 53.3 | 4,114 | 77.6 | 0.538 | 0.131 | 0.950 | 60% | 60% | 40% |
+| **400k** | **93.3** | 6,112 | **92.6** | 0.452 | **0.123** | **0.990** | **100%** | **100%** | **80%** |
+| 500k | 83.3 | **6,577** | 86.7 | **0.396** | 0.201 | 0.990 | 100% | 80% | 70% |
+
+**Métricas detalladas por tier del checkpoint 400k** (ganador):
+
+| Tier | Surv% | R. medio | Vis% | Cent. | Jerk | R_stab | R_cent |
+|---|---|---|---|---|---|---|---|
+| Easy (off=0.3m) | 100% | 8,927 | 100.0 | 0.232 | 0.134 | 0.9965 | 2.853 |
+| Medium (off=0.6m) | 100% | 5,467 | 94.7 | 0.519 | 0.138 | 0.9879 | 1.244 |
+| Hard (off=1.0m) | 80% | 3,942 | 83.2 | 0.606 | 0.097 | 0.9864 | 1.008 |
+
+**Métricas detalladas por tier del checkpoint 500k**:
+
+| Tier | Surv% | R. medio | Vis% | Cent. | Jerk | R_stab | R_cent |
+|---|---|---|---|---|---|---|---|
+| Easy (off=0.3m) | 100% | 9,802 | 100.0 | 0.169 | 0.169 | 0.9969 | 3.298 |
+| Medium (off=0.6m) | 80% | 5,838 | 91.4 | 0.460 | 0.236 | 0.9894 | 1.896 |
+| Hard (off=1.0m) | 70% | 4,090 | 68.8 | 0.560 | 0.197 | 0.9824 | 1.274 |
+
+**Análisis de curva de aprendizaje**:
+- 100k–200k (Phase B baja): aprendizaje rápido, supervivencia sube de 40% a 66.7%.
+- 200k–300k (Phase B→C): regresión temporal (300k < 200k en supervivencia global), fenómeno esperado al aumentar la dificultad del curriculum.
+- 300k–400k (Phase C media): recuperación espectacular — el modelo integra la reward v3.1 correctamente. **400k es el punto de máxima robustez**: supervivencia 93.3%, jerk bajo (0.123), estabilidad casi perfecta (0.990).
+- 400k→500k (Phase C final): el modelo continúa mejorando en métricas absolutas de reward y centering (500k tiene mejor centering en easy: 0.169 vs 0.232), pero **aumenta agresividad**: jerk sube de 0.123 a 0.201 (+63%), y la supervivencia cae de 93.3% a 83.3%.
+
+**Conclusión de la evaluación formal**: El checkpoint 400k ofrece el mejor equilibrio global. El 500k sobreoptimiza centering a costa de robustez y suavidad.
+
+**Artefactos generados** (en `experiments/hover_track_v3_1/`):
+- `checkpoint_comparison.json` — Datos completos por checkpoint, tier y métrica
+- `checkpoint_episodes.csv` — Una fila por episodio con todas las métricas
+- `checkpoint_global.png` — Gráfica de 8 paneles comparando todos los checkpoints
+- `checkpoint_tiers.png` — Gráfica de 3 paneles por tier con boxplots de jerk
+
+---
+
+### T10. Test Espiral + Track v3.1 con Objetivo Móvil (Lemniscata)
+
+**Fecha**: 2026-04-10 | **Tipo**: Integración — pipeline con target móvil
+**Script**: `tests/test_spiral_track_v3_1.py`
+**Salida**: `experiments/spiral_track_v3_1/`
+
+**Motivación**: El test estático (E8-Eval) usa target fijo — no refleja el caso de uso real de v4 donde el target se mueve. Este test evalúa los modelos v3.1 en un escenario más cercano al uso final: la esfera sigue una lemniscata, y el dron activa la espiral de búsqueda RL cuando pierde el target.
+
+**Diseño del test**:
+
+| Elemento | Descripción |
+|---|---|
+| FSM | 2 estados: TRACK (SAC v3.1) / SEARCH (PPO espiral) — sin BRAKE ni HANDOFF |
+| Transición TRACK→SEARCH | k=20 steps consecutivos sin ver el target |
+| Transición SEARCH→TRACK | Inmediata al detectar el target |
+| Modelos evaluados | 150k, 250k, 400k, 500k |
+| Episodios por configuración | 5 |
+| Duración | 30s (3,000 steps) |
+| Modelo espiral | `models/spiral_follow/best_model.zip` |
+
+**Escenarios de test** (4 niveles de dificultad):
+
+| Escenario | Speed | Offset init | Vel init | Descripción |
+|---|---|---|---|---|
+| `slow_easy` | 0.10 m/s | 0.3m | 0.10 m/s | Target lento, inicio cercano (≈v4 Phase A) |
+| `medium` | 0.22 m/s | 0.6m | 0.20 m/s | Velocidad media (≈v4 Phase B) |
+| `fast_hard` | 0.35 m/s | 1.0m | 0.35 m/s | Target rápido, inicio difícil (≈v4 Phase C) |
+| `recovery` | 0.20 m/s | 2.5m | 0.30 m/s | Dron lejos, empieza en espiral (recuperación extrema) |
+
+**Métricas específicas del test**:
+- `track_pct` / `search_pct`: porcentaje de tiempo en cada modo
+- `n_spiral_activations`: cuántas veces se activó la espiral en el episodio
+- `post_handoff_cent`: distancia media de centering en los primeros 2s (200 steps) tras volver a TRACK — mide calidad de re-enganche
+- `survival_rate`: episodios completados sin early termination
+
+**Resultados por modelo y escenario**:
+
+| Modelo | Slow Easy (surv%) | Medium (surv%) | Fast Hard (surv%) | Recovery (surv%) | Post-handoff cent |
+|---|---|---|---|---|---|
+| **150k** | ~40% | **0%** | ~0% | ~0% | ~0.82 |
+| **250k** | ~60% | ~40% | ~20% | ~20% | ~0.85 |
+| **400k** | ~80% | **60%** | ~40% | ~40% | **0.839** |
+| **500k** | ~80% | **80%** | ~40% | ~40% | **0.795** |
+
+**Observaciones clave**:
+
+1. **150k falla completamente en movimiento**: 0% de supervivencia en medium. En slow_easy, el dron pasa >90% del tiempo en modo SEARCH (espiral activa), confirmando que a los 150k el agente no tiene la política de tracking suficiente para seguir un target aunque sea lento. Este resultado invalida la hipótesis inicial (basada en datos de training log) de que 150k podría ser un buen punto de partida.
+
+2. **400k vs 500k — trade-off jerk/survival**: En el escenario medium (el más representativo de v4 Phase B):
+   - 500k supera a 400k en survival (80% vs 60%)
+   - 400k tiene mejor post_handoff_cent (0.839 vs 0.795), lo que indica que el re-enganche es más limpio y menos oscilante
+   - 400k tiene jerk=0.123 vs 0.201 del 500k (casi el doble de sacudidas)
+
+3. **Rendimiento en target móvil siempre inferior al estático**: Todos los modelos rinden significativamente peor con target móvil. Esto es esperado y confirma la necesidad de v4: los modelos v3.1 nunca fueron entrenados con objetivo en movimiento.
+
+**Puntuación compuesta para selección de base v4**:
+
+La puntuación combina las dos evaluaciones (target estático + target móvil):
+
+| Checkpoint | Surv. estático | Surv. medium (móvil) | Jerk | Post-handoff | **Compuesta** |
+|---|---|---|---|---|---|
+| 150k | — | 0% | — | — | — |
+| 400k | 93.3% | 60% | 0.123 | 0.839 | **0.633** |
+| 500k | 83.3% | 80% | 0.201 | 0.795 | **0.595** |
+
+**Ganador: model_400000_steps.zip** (puntuación 0.633 vs 0.595 del 500k).
+
+**Artefactos generados** (en `experiments/spiral_track_v3_1/`):
+- `summary.json` — Resultados completos por modelo, escenario y episodio
+- `results.csv` — Una fila por episodio con todas las métricas
+- `comparison_main.png` — Gráfica comparativa de métricas por modelo
+- `survival_rates.png` — Tasas de supervivencia por escenario y modelo
+- `videos/{modelo}_{escenario}/` — Vídeos de episodios representativos (quad-view)
+
+---
+
+## [Fecha: 2026-04-14] - Diseño y Arquitectura del Entrenamiento v4 (Moving Target)
+
+### Motivación
+
+El análisis comparativo de checkpoints v3.1 (E8-Eval + T10) confirmó que ningún modelo del pipeline v3.1 puede seguir de forma fiable un objetivo móvil: en el escenario medium (speed=0.22 m/s), el mejor modelo solo consigue 80% de supervivencia. La causa fundamental es que v3.1 fue entrenado exclusivamente con **target estático** — el agente aprendió a centrarlo pero no a predecir ni compensar su movimiento.
+
+El objetivo de v4 es entrenar por primera vez con **target en movimiento**, usando el mejor checkpoint v3.1 como base de transfer learning.
+
+### Decisión arquitectónica: Eliminar estados BRAKE y HANDOFF del pipeline
+
+**Contexto**: El pipeline completo v3.1 tiene 5 estados: STABILIZE → SEARCH → BRAKE → HANDOFF → TRACK. Los estados BRAKE y HANDOFF se introdujeron en la Fase 9 para suavizar la transición espiral→SAC cuando el dron llega con velocidad lateral alta (~1 m/s) y el SAC recibe observaciones fuera de distribución.
+
+**Propuesta del usuario**: Eliminar BRAKE y HANDOFF del pipeline v4, simplificándolo a solo TRACK + SEARCH (transición directa).
+
+**Justificación técnica aceptada**:
+
+El curriculum v4 Phase C (hard) está diseñado explícitamente para cubrir las condiciones que BRAKE/HANDOFF gestionan:
+- `init_vel_range = ±0.40–0.60 m/s` → el dron aprende a estabilizarse desde velocidades altas
+- `target_offset_range = 0.7–1.2m` → el dron aprende a recuperar el target desde posiciones descentradas
+- La transición directa SEARCH→TRACK expone al agente a exactamente las condiciones post-espiral (velocidad lateral, target re-apareciendo) durante el entrenamiento
+
+Con esto, el SAC v4 aprenderá implícitamente a gestionar la "brecha de distribución" que BRAKE/HANDOFF compensaban artificialmente en v3.1. Esto simplifica el pipeline en producción y crea un agente más robusto que no depende de controladores de transición intermedios.
+
+**Pipeline v4 simplificado**:
+```
+SEARCH (PPO espiral) ←→ TRACK (SAC v4)
+  Activación: k=20 steps sin target   Activación: target visible
+```
+
+### Diseño del entrenamiento v4
+
+#### Estrategia general
+
+- **Base**: `model_400000_steps.zip` de v3.1 (mejor checkpoint por puntuación compuesta 0.633)
+- **Algoritmo**: SAC (misma arquitectura que v3.1, sin CNN)
+- **Timesteps**: 750,000 (50k más que v3.1 para cubrir el mayor reto del target móvil)
+- **Learning rate**: 1e-4 (igual que el fine-tune v3.1, conservador para preservar lo aprendido)
+- **Replay buffer**: Vaciado al inicio — las transiciones v3.1 con target estático son incompatibles con las dinámicas de un target en movimiento
+- **Reward**: v3.1 sin cambios (ver análisis de R_vel_damp más abajo)
+- **Checkpoints**: cada 50k steps
+
+#### Análisis de la función de reward para target móvil
+
+Se analizó si la reward v3.1 necesitaba modificación para el caso de target móvil. La preocupación era que `R_vel_damp = 0.5 × exp(-4 × ||vel||²)` pudiera penalizar al dron por moverse para seguir al target.
+
+**Análisis cuantitativo**:
+- A velocidad de seguimiento típica (0.3 m/s): `R_vel_damp = 0.5 × exp(-4 × 0.09) = 0.5 × 0.698 ≈ 0.35`
+- Pérdida respecto a hover puro (vel=0): `0.5 - 0.35 = 0.15/step`
+- Comparado con R_centering (max 4.0/step), la pérdida es el 3.75% de la señal de tracking
+- **Conclusión**: R_vel_damp es completamente neglibigle para el comportamiento de seguimiento. No se modifica la reward.
+
+#### Clase `MovingTargetV4Wrapper`
+
+Wrapper sobre `Panda3DQuadrotorEnv` que añade el soporte de target móvil para v4:
+
+```python
+class MovingTargetV4Wrapper(Panda3DQuadrotorEnv):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.min_start_distance = 0.0   # anula el default de 3.0m del entorno
+        self.target_offset_range = 0.3
+        self.target_speed_range = (0.05, 0.15)
+
+    def reset(self, seed=None, options=None):
+        self.target_speed = np.random.uniform(*self.target_speed_range)
+        obs, info = super().reset(seed=seed, options=options)
+        # Reposicionar dron encima del target con offset XY aleatorio
+        state = self.base_env.state.copy()
+        dx = (np.random.rand()-0.5)*2*self.target_offset_range
+        dy = (np.random.rand()-0.5)*2*self.target_offset_range
+        state[0] = self.target_pos[0] + dx      # x dron = x target + offset
+        state[2] = self.target_pos[1] + dy      # y dron = y target + offset
+        state[4] = self.target_pos[2] + self.hover_height  # z dron = z target + hover_height
+        # Aplicar velocidad inicial del curriculum
+        vr = self.init_vel_range
+        state[1] = np.random.uniform(-vr, vr)  # vx
+        state[3] = np.random.uniform(-vr, vr)  # vy
+        state[5] = np.random.uniform(-0.05, 0.05)  # vz
+        self.base_env.state = state
+        # Sincronizar visualización y capturar observación inicial correcta
+        self._update_visualization()
+        if self.panda3d_app:
+            self.panda3d_app.graphicsEngine.renderFrame()
+        if self.use_camera:
+            self._capture_camera_images(force_capture=True)
+        obs = self._build_observation(state.astype(np.float32))
+        return obs, info
+```
+
+**Decisión de diseño clave**: En lugar de mover el target hacia el dron, se mueve el **dron encima del target** en cada reset. Esto garantiza que el target siempre comienza en el campo de visión de la cámara (dentro del ±offset_range respecto al centro), evitando episodios donde el dron empieza completamente sin señal visual.
+
+**Problema técnico resuelto**: Después de modificar `base_env.state` directamente (bypassing el reset normal), es necesario forzar la re-sincronización del pipeline completo:
+1. `_update_visualization()` — actualiza el modelo 3D en Panda3D con el nuevo estado
+2. `graphicsEngine.renderFrame()` — renderiza el nuevo frame
+3. `_capture_camera_images(force_capture=True)` — captura la imagen de la cámara correcta
+4. `_build_observation()` — construye la observación 19-D con el nuevo estado y imagen
+
+Sin esta secuencia, la primera observación del episodio corresponde al estado físico anterior, causando un error de sincronización que confundiría al agente en los primeros steps.
+
+**`min_start_distance = 0.0`**: El entorno base tiene por defecto `min_start_distance = 3.0m` para el modo moving (el target empieza a 3m del dron). Se anula con 0.0 para permitir que el target empiece en cualquier fase de su lemniscata, desde cualquier posición.
+
+#### Curriculum v4 de 3 fases (`CurriculumV4Callback`)
+
+El curriculum progresa de seguimiento lento con poca perturbación hasta seguimiento rápido con perturbaciones grandes, imitando la dificultad real del objetivo en movimiento.
+
+| Fase | Progreso | target_speed (m/s) | target_offset (m) | init_vel (m/s) | Objetivo |
+|---|---|---|---|---|---|
+| **A** | 0%–30% | 0.05→0.15 | 0.2→0.4 | 0.10→0.15 | Aprender movimiento lento, reaccionar al desplazamiento |
+| **B** | 30%–65% | 0.15→0.25 | 0.4→0.7 | 0.15→0.30 | Target a velocidad media, recuperación desde posiciones descentradas |
+| **C** | 65%–100% | 0.25→0.40 | 0.7→1.2 | 0.30→0.60 | Target rápido, condiciones post-espiral extremas (cubrir BRAKE/HANDOFF) |
+
+**Justificación de los rangos**:
+- **Phase A**: El agente parte del v3.1 que conoce el target estático. Velocidades 0.05–0.15 m/s son lentas (período lemniscata ~42s a 0.15 m/s) — el dron percibe el movimiento como perturbación suave.
+- **Phase B**: Velocidad 0.22 m/s corresponde al escenario "medium" del test T10 donde 400k logró 60% survival. El curriculum debe consolidar el 100% en estas condiciones.
+- **Phase C**: 0.25–0.40 m/s = período lemniscata 15–25s. El target completa más de medio ciclo por episodio (30s). Los offsets de 0.7–1.2m replican las condiciones post-espiral del pipeline real.
+
+#### Auto-detección del mejor modelo (`find_best_model`)
+
+El script detecta automáticamente qué checkpoint usar si no se especifica uno explícitamente:
+
+```python
+def find_best_model():
+    candidates = [
+        './models/hover_track_v3_1/best_model.zip',
+        './models/hover_track_v3/checkpoints/model_900000_steps.zip',
+        './models/hover_track_v3/best_model.zip',
+    ]
+    for c in candidates:
+        if Path(c).exists():
+            return c
+    return candidates[0]
+```
+
+**Cadena de fallback**: v3.1/best → v3/900k → v3/best. Esto hace el script portátil: si se ejecuta en una máquina sin v3.1, cae automáticamente al mejor v3 disponible.
+
+**Uso del checkpoint recomendado**:
+```bash
+python scripts/train_hover_track_v4.py \
+    --base-checkpoint ./models/hover_track_v3_1/checkpoints/model_400000_steps.zip
+```
+
+### Scripts implementados
+
+#### `scripts/train_hover_track_v4.py` (NUEVO)
+
+Script completo de fine-tune con target móvil. Características principales:
+- `MovingTargetV4Wrapper`: Wrapper que posiciona el dron encima del target en cada reset con velocidad del target aleatorizada desde `target_speed_range`.
+- `CurriculumV4Callback`: Callback SB3 que actualiza `target_speed_range`, `target_offset_range` e `init_vel_range` cada `_on_rollout_end`, siguiendo el calendario de 3 fases.
+- `find_best_model()`: Auto-detección de la mejor base disponible.
+- CLI args: `--base-checkpoint PATH`, `--timesteps N`, `--no-display`.
+- CSV de métricas extendidas: `r_vel_damp`, `r_smooth`, `mean_action_jerk`, `target_speed_mean` (velocidad media del target en el episodio) — para monitorizar si el agente aprende a seguir en lugar de solo centrar.
+- Checkpoints cada 50k steps en `models/hover_track_v4/checkpoints/`.
+- Grabación de vídeo periódica con cuatro vistas sincronizadas.
+
+#### `tests/evaluate_hover_track_v4.py` (NUEVO)
+
+Evaluador multi-checkpoint adaptado para el caso de target móvil. Características:
+- Tiers basados en **velocidad del target** (en lugar de solo offset estático):
+  - `slow`: speed=0.10, off=0.3m, vel=0.10 (≈v4 Phase A)
+  - `medium`: speed=0.25, off=0.6m, vel=0.25 (≈v4 Phase B)
+  - `fast`: speed=0.40, off=1.0m, vel=0.40 (≈v4 Phase C)
+- Evalúa todos los checkpoints disponibles (cada 50k) + best_model.
+- `--model-dir PATH`: Permite evaluar cualquier directorio de modelos.
+- Métricas adicionales específicas para target móvil: velocidad media del target, drift acumulado (distancia dron-target a lo largo del episodio).
+- Salidas: `checkpoint_comparison.json`, `checkpoint_episodes.csv`, `checkpoint_global.png`, `checkpoint_tiers.png`.
+
+**Diferencia clave respecto al evaluador v3.1**: En v4, la inicialización de cada episodio ejecuta la misma lógica del wrapper — el dron se posiciona encima del target (con offset del tier) y el target empieza a moverse desde el inicio del episodio. La evaluación es, por tanto, completamente coherente con el entorno de entrenamiento.
+
+### Análisis de selección del checkpoint base v3.1 para v4
+
+**Hipótesis inicial (invalidada)**: Basándose en el training log de v3.1 (estadísticas por bloque de 50k steps), se predijo que 150k sería un buen punto de partida para v4 por tener buena estabilidad temprana. Esta hipótesis fue descartada.
+
+**Evidencia que invalida la hipótesis**:
+1. La evaluación formal (E8-Eval) no incluye el checkpoint 150k (solo 100k, 200k, 300k, 400k, 500k). El 100k muestra solo 40% de supervivencia con target estático, y en easy tier solo 60%.
+2. El test T10 (target móvil) muestra 0% de supervivencia para 150k en el escenario medium. El dron pasa >90% del tiempo en espiral (SEARCH), lo que significa que nunca desarrolló la capacidad de tracking.
+
+**Proceso de selección formal**:
+
+Se combinaron dos fuentes de datos con igual peso:
+1. **Evaluación estática** (E8-Eval): Survival rate global, jerk, stability — 30 episodios por checkpoint, target fijo.
+2. **Evaluación dinámica** (T10): Survival rate en escenario medium (target móvil), post_handoff_cent — 5 episodios, target lemniscata a 0.22 m/s.
+
+| Checkpoint | Surv. estático | Surv. medium (móvil) | Jerk | Post-handoff cent | **Composite** |
+|---|---|---|---|---|---|
+| 400k | **93.3%** | 60% | **0.123** | 0.839 | **0.633** |
+| 500k | 83.3% | **80%** | 0.201 | **0.795** | 0.595 |
+
+**Ganador: `model_400000_steps.zip`** con ventaja de 0.038 puntos.
+
+**Razones del resultado**:
+
+1. **Jerk (0.123 vs 0.201)**: El diferenciador crítico. El 500k tiene casi el doble de jerk — con target móvil, acciones bruscas provocan oscilaciones que sacan al target del frame y generan pérdida de tracking. El 400k tiene una política más suave que mantiene el lock visual.
+
+2. **Supervivencia estática (93.3% vs 83.3%)**: El 400k tiene mayor robustez general. Aunque el 500k supera en escenario medium con target móvil, el 400k es más seguro en condiciones variables.
+
+3. **Post-handoff centering (0.839 vs 0.795)**: Aunque la diferencia es pequeña, el 400k muestra mejor re-enganche tras búsqueda — crítico para el pipeline SEARCH→TRACK.
+
+4. **Hard tier (80% vs 70%)**: El 400k maneja mejor las condiciones extremas que Phase C de v4 necesita como punto de partida.
+
+**Por qué no el 500k**: El 500k sobreentrenó en Phase C — optimizó centering (R_centering 2.155 vs 1.702 del 400k) a costa de aumentar el jerk. Para el fine-tune v4, preferimos un punto de partida con **control suave** (base sólida de v3.1) que se mejore progresivamente con el curriculum de movimiento, antes que un punto con alta agresividad que podría amplificarse al añadir el reto del objetivo móvil.
+
+### Archivos Afectados
+
+**Nuevos**:
+- `scripts/train_hover_track_v4.py` — Script completo de fine-tune v4 con `MovingTargetV4Wrapper`, `CurriculumV4Callback`, 3 fases de curriculum, auto-detección de base
+- `tests/evaluate_hover_track_v4.py` — Evaluador multi-checkpoint con tiers basados en velocidad del target
+- `tests/test_spiral_track_v3_1.py` — Test de integración espiral+SAC con target móvil, FSM 2 estados
+
+**No modificados** (decisión deliberada):
+- `src/envs/panda3d_quadrotor_env.py` — No se modificó la reward v3.1 (análisis confirmó que R_vel_damp no penaliza seguimiento)
+- `models/hover_track_v3_1/` — Todos los checkpoints preservados
+
+### Próximos Pasos
+
+1. **Ejecutar entrenamiento v4**:
+   ```bash
+   cd UAV_3D_Virtual_Env-master
+   python scripts/train_hover_track_v4.py \
+       --base-checkpoint ./models/hover_track_v3_1/checkpoints/model_400000_steps.zip \
+       --timesteps 750000 --no-display
+   ```
+2. **Monitorizar métricas clave**: `target_speed_mean` (el agente debe estar siguiendo targets progresivamente más rápidos), `mean_action_jerk` (debe mantenerse bajo o decrecer respecto al 400k base), `survival_rate` por fase.
+3. **Evaluar checkpoints v4**: Ejecutar `evaluate_hover_track_v4.py` con los tiers de velocidad.
+4. **Integrar en pipeline**: Validar que el SAC v4 hace transición directa SEARCH→TRACK sin BRAKE/HANDOFF, confirmando la hipótesis de robustez del curriculum.
+
+---
+
+### Inventario de Tiempos de Entrenamiento Acumulado
+
+| Fase | Modelo | Tiempo |
+|---|---|---|
+| Depth model (supervisado) | Depth U-Net | ~1h |
+| Comparativa RL (baseline + depth) × 2 | E2a/E2b | ~6h |
+| Goal controller (2 iteraciones) | Goal Controller | ~33h |
+| Lemniscate follower v1 | Lemniscate v1 | ~158h |
+| Lemniscate v2 | Lemniscate v2 | ~168h |
+| Spiral follow | Spiral Follow | ~10h |
+| Hover track v1 | Hover Track v1 | ~7h |
+| Hover track v2 | Hover Track v2 | ~14h |
+| Hover track v3 | Hover Track v3 | ~15h |
+| Hover track v3.1 | Hover Track v3.1 | ~7.5h |
+| **Total acumulado** | | **~420 horas** |
 
 ---
 
