@@ -16,16 +16,23 @@ No BRAKE or HANDOFF states:  the hard curriculum tier (high velocity,
 large offset) trains the agent to recover from post-spiral conditions
 directly.
 
-Curriculum (3 phases)
----------------------
-  A [0 %, 30 %)   speed 0.05→0.15, offset 0.2→0.4 m, easy init
-  B [30 %, 65 %)  speed 0.15→0.25, offset 0.4→0.7 m, medium init
-  C [65 %, 100 %] speed 0.25→0.40, offset 0.7→1.2 m, hard init (v≤0.6)
+Curriculum (3 phases, re-tuned v4.1 defaults)
+---------------------------------------------
+  A [0 %, 30 %)    speed 0.05→0.15, offset 0.2→0.4 m, easy init
+  B [30 %, 75 %)   speed 0.15→0.25, offset 0.4→0.7 m, medium init
+  C [75 %, 100 %]  speed capped @ 0.25 m/s, offset 0.7→1.2 m, hard init
+
+Key changes vs. v4 original run:
+  • Base checkpoint: v3.1 @ 400K (higher survival than 500K best_model).
+  • Phase C max speed reduced 0.40 → 0.25 m/s (realistic for physics).
+  • Phase B extended 30–65 → 30–75 % (more mid-speed consolidation).
+  • Crash penalty on early termination, scaled by remaining steps.
+  • Output directory default: ./models/hover_track_v4_1 (preserves v4).
 
 Usage:
     python scripts/train_hover_track_v4.py
     python scripts/train_hover_track_v4.py --timesteps 500000
-    python scripts/train_hover_track_v4.py --base-checkpoint ./models/hover_track_v3/checkpoints/model_900000_steps.zip
+    python scripts/train_hover_track_v4.py --max-speed-c 0.30 --phase-c 0.70
 """
 
 import argparse
@@ -68,8 +75,17 @@ from src.utils.episode_recorder import EpisodeRecorder
 # ══════════════════════════════════════════════════════════════════════
 
 def find_best_model():
-    """Return path to the best available pre-trained model."""
+    """Return path to the best available pre-trained model.
+
+    Preference order:
+      1. v3.1 checkpoint @ 400K steps — evaluation data shows this
+         checkpoint has higher survival (93% global) than the 500K
+         best_model.zip (83% global), with 100/100/80 % across tiers.
+      2. Fallback to v3.1 best_model.zip (typically 500K).
+      3. Fallback to v3 checkpoints.
+    """
     candidates = [
+        './models/hover_track_v3_1/checkpoints/model_400000_steps.zip',
         './models/hover_track_v3_1/best_model.zip',
         './models/hover_track_v3/checkpoints/model_900000_steps.zip',
         './models/hover_track_v3/best_model.zip',
@@ -228,7 +244,7 @@ class CurriculumV4Callback(BaseCallback):
     ]
 
     def __init__(self, raw_env, output_dir,
-                 phase_b=0.30, phase_c=0.65,
+                 phase_b=0.30, phase_c=0.75, max_speed_c=0.25,
                  metrics_window=50, verbose=1):
         super().__init__(verbose)
         self.raw_env = raw_env
@@ -236,6 +252,7 @@ class CurriculumV4Callback(BaseCallback):
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.phase_b = phase_b
         self.phase_c = phase_c
+        self.max_speed_c = max_speed_c
 
         self.episode_count = 0
         self.episode_rewards = deque(maxlen=metrics_window)
@@ -310,10 +327,14 @@ class CurriculumV4Callback(BaseCallback):
 
         else:
             # ── Phase C: fast target, hard recovery ──
+            # Speed hi is capped at max_speed_c (default 0.25 m/s —
+            # drone physics cannot reliably follow faster targets).
             self.current_phase = 'C'
             p = (progress - self.phase_c) / (1.0 - self.phase_c)
-            speed_lo = 0.15 + p * 0.10              # 0.15 → 0.25
-            speed_hi = 0.25 + p * 0.15              # 0.25 → 0.40
+            max_hi = self.max_speed_c
+            max_lo = max(0.15, max_hi - 0.05)
+            speed_lo = 0.15 + p * (max_lo - 0.15)     # 0.15 → max_lo
+            speed_hi = 0.25 + p * (max_hi - 0.25)     # 0.25 → max_hi
             self.cur_speed_range = (speed_lo, speed_hi)
             self.target_offset_range = 0.7 + p * 0.5   # 0.7 → 1.2 m
             self.cur_pos_range = 0.5 + p * 0.3         # 0.5 → 0.8 m
@@ -459,11 +480,12 @@ class MovingTargetV4Wrapper(Panda3DQuadrotorEnv):
       3. Target speed is sampled from curriculum-controlled range.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, crash_penalty_base=10.0, **kwargs):
         super().__init__(*args, **kwargs)
         self.min_start_distance = 0.0   # allow any lemniscate phase
         self.target_offset_range = 0.3  # initial XY offset from target
         self.target_speed_range = (0.05, 0.15)  # set by curriculum
+        self.crash_penalty_base = crash_penalty_base
 
     def reset(self, seed=None, options=None):
         # Sample target speed for this episode
@@ -508,6 +530,29 @@ class MovingTargetV4Wrapper(Panda3DQuadrotorEnv):
 
         return obs, info
 
+    def step(self, action):
+        """Step the env, applying a crash penalty on early termination.
+
+        The base env runs with enable_collisions=False, so a crash is
+        detected as terminated=True before the full episode completes.
+        Penalty is proportional to remaining steps — crashes early in
+        the episode are punished more than late crashes.
+        """
+        obs, reward, terminated, truncated, info = super().step(action)
+
+        if terminated:
+            max_steps = self.base_env.n
+            remaining = max(0, max_steps - self._step_counter)
+            crash_penalty = -max(
+                self.crash_penalty_base,
+                0.02 * remaining,
+            )
+            reward += crash_penalty
+            info.setdefault('visual_tracking', {})
+            info['visual_tracking']['crash_penalty'] = crash_penalty
+
+        return obs, reward, terminated, truncated, info
+
 
 # ══════════════════════════════════════════════════════════════════════
 # CLI
@@ -526,14 +571,19 @@ def parse_args():
     p.add_argument('--lemniscate-scale', type=float, default=2.0,
                    help="Lemniscate half-width in metres (default: 2.0)")
     p.add_argument('--output-dir', type=str,
-                   default='./models/hover_track_v4')
+                   default='./models/hover_track_v4_1')
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--no-display', action='store_true')
     p.add_argument('--learning-rate', type=float, default=1e-4)
     p.add_argument('--phase-b', type=float, default=0.30,
                    help="Fraction at which Phase B starts (default: 0.30)")
-    p.add_argument('--phase-c', type=float, default=0.65,
-                   help="Fraction at which Phase C starts (default: 0.65)")
+    p.add_argument('--phase-c', type=float, default=0.75,
+                   help="Fraction at which Phase C starts (default: 0.75)")
+    p.add_argument('--max-speed-c', type=float, default=0.25,
+                   help="Max target speed in Phase C in m/s (default: 0.25)")
+    p.add_argument('--crash-penalty-base', type=float, default=10.0,
+                   help="Base crash penalty applied on early termination "
+                        "(scaled by remaining steps; default: 10.0)")
     p.add_argument('--checkpoint-freq', type=int, default=50_000)
     p.add_argument('--record-interval', type=int, default=25,
                    help="Record one episode every N episodes (0 = disable)")
@@ -607,6 +657,7 @@ class HoverTrackV4App(ShowBase):
             init_vel_range=0.10,
             init_ang_range=0.03,
             reward_version='v3.1',
+            crash_penalty_base=args.crash_penalty_base,
         )
 
         self.env = Monitor(self.raw_env)
@@ -654,6 +705,9 @@ class HoverTrackV4App(ShowBase):
         print(f"  Phases:         A[0-{args.phase_b:.0%}] "
               f"B[{args.phase_b:.0%}-{args.phase_c:.0%}] "
               f"C[{args.phase_c:.0%}-100%]")
+        print(f"  Max speed C:    {args.max_speed_c} m/s")
+        print(f"  Crash penalty:  base={args.crash_penalty_base} "
+              f"(scaled by remaining steps)")
         print(f"  Buffer:         EMPTY (fresh start)")
         print(f"  Output:         {args.output_dir}")
         print("=" * 70)
@@ -668,6 +722,7 @@ class HoverTrackV4App(ShowBase):
             output_dir=str(self.output_dir),
             phase_b=args.phase_b,
             phase_c=args.phase_c,
+            max_speed_c=args.max_speed_c,
         )
 
         ckpt_dir = self.output_dir / 'checkpoints'
@@ -728,13 +783,20 @@ class HoverTrackV4App(ShowBase):
             'curriculum_phases': {
                 'A': f'0-{args.phase_b:.0%} (slow target, easy init)',
                 'B': f'{args.phase_b:.0%}-{args.phase_c:.0%} (medium target)',
-                'C': f'{args.phase_c:.0%}-100% (fast target, hard init)',
+                'C': f'{args.phase_c:.0%}-100% '
+                     f'(capped @ {args.max_speed_c} m/s, hard init)',
             },
+            'max_speed_c': args.max_speed_c,
+            'crash_penalty_base': args.crash_penalty_base,
             'v4_changes': [
                 'Moving target (Bernoulli lemniscate trajectory)',
                 'Drone repositioned above target at episode start',
-                'Progressive target speed curriculum (0.05 → 0.40)',
-                'No BRAKE/HANDOFF — hard tier covers recovery',
+                f'Progressive target speed curriculum '
+                f'(0.05 → {args.max_speed_c})',
+                'Extended Phase B, shortened Phase C '
+                f'({args.phase_b:.0%}-{args.phase_c:.0%}-100%)',
+                'Crash penalty on early termination '
+                f'(base={args.crash_penalty_base}, scaled by remaining steps)',
                 'v3.1 stability-gated reward unchanged',
                 f'Lemniscate scale: {args.lemniscate_scale}m',
             ],

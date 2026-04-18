@@ -423,7 +423,7 @@ El controlador garantiza que el SAC nunca actúa con el target invisible y que e
 | Hover Track v2 | `models/hover_track_v2/best_model.zip` | SAC | Hover robusto: target descentrado, recuperación post-espiral |
 | Hover Track v3 | `models/hover_track_v3/best_model.zip` | SAC | Phase 0 estabilización + centering apretado (4 fases) |
 | Hover Track v3.1 | `models/hover_track_v3_1/checkpoints/model_400000_steps.zip` | SAC | Fine-tune de v3: reward multiplicativa. **Mejor checkpoint: 400k** (93.3% surv, jerk=0.123) |
-| Hover Track v4 | `models/hover_track_v4/best_model.zip` | SAC | Fine-tune de v3.1 (400k) con objetivo móvil en lemniscata (pendiente) |
+| Hover Track v4 | `models/hover_track_v4/best_model.zip` | SAC | Fine-tune de v3.1 (400k) con objetivo móvil. 750k steps, ~22h. **Resultado: catastrophic forgetting en Phase C** — pendiente v4.1 |
 | Lemniscate v2 | `models/lemniscate_v2/interrupted_model.zip` | PPO | Seguir trayectoria en ∞ (interrumpido, parcial) |
 
 ---

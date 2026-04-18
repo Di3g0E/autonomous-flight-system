@@ -6,7 +6,10 @@
 - **Sistema de seguimiento visual** con target magenta, recompensa basada en fracción de imagen y modo filming con aislamiento completo de reward.
 - **Sistema de recompensa v2** con 6 componentes densos, curriculum adaptativo de 3 fases y transfer learning.
 - **Modelo de espiral RL** (`SpiralFollowEnv`) para búsqueda de target perdido con trayectoria de Arquímedes.
-- **Hover Tracking v3** con SAC, cámara vertical, observación centroide 19-D (sin CNN), reward de 3 componentes y controlador de espiral integrado como fallback.
+- **Hover Tracking v3** con SAC, cámara vertical, observación centroide 19-D (sin CNN), reward aditiva de 4 componentes.
+- **Hover Tracking v3.1** — Fine-tune de v3 con reward multiplicativa (estabilidad como gate). **Mejor checkpoint: 400k** (surv 93.3%, jerk 0.123, Easy 100% / Med 100% / Hard 80%).
+- **Test Espiral+SAC v3.1** — Integración FSM 2-estados con target móvil en lemniscata. Evaluación de 4 modelos × 4 escenarios.
+- **Hover Tracking v4** (pendiente) — Fine-tune de v3.1/400k con target móvil, curriculum 3 fases, pipeline simplificado sin BRAKE/HANDOFF.
 
 ## 🏗️ Arquitectura Implementada
 
@@ -162,6 +165,80 @@
 - [x] Entrenamiento SAC completado (200k steps, 509 episodios): reward +10.3×, visibilidad 91%, centering -37%
 - [x] Test de evaluación con integración de espiral y telemetría per-step
 
+### ✅ Fase 8: Hover Tracking v2 y v3 — Curriculum Robusto
+
+- [x] Hover Track v2: curriculum 3 fases con target offset XY (±0.1→1.0m), velocity (±0.10→0.35 m/s), episodios 15s, red [256, 128]
+- [x] `OffsetTargetWrapper`: desplaza target tras reset, re-captura cámara y reconstruye observación
+- [x] Hover Track v3: Phase 0 de estabilización pura (sin target, R_vel_cancel=2.0×exp(-5v²)), centering más estrecho `4.0×exp(-6d²)`, episodios 30s
+- [x] `_compute_v3_reward()`: nuevo componente R_center_vel (bonus por reducir distancia al centro)
+- [x] `stabilization_only` flag controlado dinámicamente por el curriculum
+- [x] Entrenamiento v3 con GPU (`.vgpu` env, PyTorch+CUDA 12.8): 1.5M steps, ~15h
+- [x] Evaluación multi-checkpoint v3 (750k, 800k, 850k, 900k, 1.5M): mejor checkpoint 900k (100% Easy, 100% Med, 40% Hard)
+- [x] Diagnóstico: problema del desequilibrio R_centering(4.0) vs R_stability(1.0) en reward aditiva
+
+### ✅ Fase 9: Hover Tracking v3.1 — Reward Multiplicativa con Estabilidad como Gate
+
+**Problema resuelto**: La reward aditiva v3 permitía R_centering=4.0 con R_stability=0.2 — el agente aprendía a corregir agresivamente sin mantener vuelo estable. En medium/hard, esto causaba oscilaciones crecientes.
+
+**Solución**: Hacer que R_tracking sea multiplicada por R_stability:
+
+```
+total = R_stability × (R_centering + R_center_vel + R_scale + 0.5) + R_vel_damp + R_smooth + R_invisible
+```
+
+- [x] `_compute_v3_1_reward(action)`: nuevo método en `panda3d_quadrotor_env.py`
+- [x] `R_smooth = -0.3 × ||Δaction||²`: penaliza cambios bruscos de motores; `_prev_action` reseteado en cada episodio
+- [x] `R_vel_damp = 0.5 × exp(-4v²)`: baja velocidad lineal durante tracking (previene inercia)
+- [x] Dispatch `reward_version='v3.1'` en `step()`: retrocompatible con v3 y anteriores
+- [x] Fine-tune SAC desde v3/900k: LR=1e-4, buffer vaciado, curriculum B+C (sin Phase 0)
+- [x] Entrenamiento completado: 500k steps, 337 episodios, 27,147s (~7.5h), reward final 5,199
+- [x] Evaluación multi-checkpoint (100k, 200k, 300k, 400k, 500k):
+
+  | Checkpoint | Surv% | Jerk | Easy | Med | Hard |
+  |---|---|---|---|---|---|
+  | 100k | 40.0 | 0.068 | 60% | 50% | 10% |
+  | 200k | 66.7 | 0.124 | 100% | 60% | 40% |
+  | 300k | 53.3 | 0.131 | 60% | 60% | 40% |
+  | **400k** | **93.3** | **0.123** | **100%** | **100%** | **80%** |
+  | 500k | 83.3 | 0.201 | 100% | 80% | 70% |
+
+- [x] **Checkpoint 400k seleccionado como mejor modelo**: mejor balance robustez/suavidad
+
+### ✅ Fase 10: Test Integración Espiral+SAC v3.1 con Target Móvil
+
+- [x] `SpiralTrackFSM`: FSM de 2 estados (TRACK/SEARCH) sin BRAKE ni HANDOFF
+  - TRACK → SEARCH: k=20 steps consecutivos sin target
+  - SEARCH → TRACK: inmediata al detectar target
+- [x] `post_handoff_cent`: métrica de calidad de re-enganche (centering dist en primeros 2s tras volver a TRACK)
+- [x] 4 escenarios × 4 modelos (150k, 250k, 400k, 500k) × 5 episodios × 30s
+- [x] Resultado clave: 150k falla completamente en medium (0% supervivencia) — invalida hipótesis inicial
+- [x] Puntuación compuesta: 400k=0.633, 500k=0.595 → **400k recomendado para v4**
+- [x] Vídeos quad-view por escenario y modelo en `experiments/spiral_track_v3_1/videos/`
+
+### ⚠️ Fase 11: Hover Tracking v4 — Target Móvil (COMPLETADO, NO CONVERGIÓ)
+
+**Decisión arquitectónica**: Pipeline simplificado a 2 estados (TRACK/SEARCH). Los estados BRAKE y HANDOFF se eliminaron — el curriculum Phase C de v4 cubre esas condiciones.
+
+- [x] `MovingTargetV4Wrapper`: posiciona dron encima del target en cada reset; sincroniza Panda3D completo
+- [x] `CurriculumV4Callback`: 3 fases A[0-30%]/B[30-65%]/C[65-100%]
+- [x] `find_best_model()`: auto-detección de base disponible
+- [x] Entrenamiento completado: 750k steps, 7,171 episodios, ~22h
+- [x] Evaluación: **0% supervivencia** en todos los tiers (excepto 200k: 20% en medium)
+
+**Diagnóstico del fallo — Catastrophic Forgetting**:
+
+Phase C usó condiciones demasiado agresivas (vel_init hasta 0.60 m/s, offset hasta 1.2m), generando episodios de 15–40 steps que saturaron el replay buffer. La R_stability cayó de 0.928 (200k) a 0.586 (750k) — el agente "olvidó" cómo volar estable.
+
+| Checkpoint | Surv% | R_stab | Obs. |
+|---|---|---|---|
+| 200k (Phase A) | 6.7% | 0.928 | Hereda v3.1 estabilidad |
+| 750k (Phase C) | 0.0% | 0.586 | Degradación severa |
+
+**Recomendaciones para v4.1**:
+- Phase C: vel_max=0.40 m/s (no 0.60), offset_max=0.8m (no 1.2m)
+- 10% de episodios Phase A/B en Phase C para prevenir olvido
+- Episodio max: 1500 steps en Phase C (no 3000)
+
 ## 🚀 Modos de Uso
 
 ### Modo 1: Headless (Entrenamiento Rápido)
@@ -278,27 +355,25 @@ Example 5: Info Dict Structure - PASSED
 | Wrapper | ~100 | Bajo | Testing sin GUI |
 | Completo | ~30-60 | Medio | Visualización/Debug |
 
-## 🔄 Próximos Pasos
+## 🔄 Estado Actual y Próximos Pasos
 
-### Corto Plazo
-1. ✅ ~~Implementar detección de colisiones~~ **COMPLETADO**
-2. ✅ ~~Implementar sistema de seguimiento visual~~ **COMPLETADO**
-3. ✅ ~~Rediseñar reward con componentes densos y curriculum~~ **COMPLETADO**
-4. ✅ ~~Calibrar hover height y espiral de búsqueda~~ **COMPLETADO**
-5. ✅ ~~Entrenar hover tracking con SAC + centroid obs~~ **COMPLETADO (200k steps)**
-6. Extender entrenamiento hover-track (+100-200k steps) para convergencia completa
-7. Evaluar con vídeos el modelo actual + integración de espiral
+### Completado
+1. ✅ Detección de colisiones modular
+2. ✅ Sistema de seguimiento visual v1/v2
+3. ✅ Reward multi-componente + curriculum adaptativo
+4. ✅ Calibración de altitud (hover_height=1.394m)
+5. ✅ Espiral RL + SpiralSearchController determinista
+6. ✅ Hover Track v1 (200k, SAC, target estático)
+7. ✅ Hover Track v2 (500k, curriculum con offset)
+8. ✅ Hover Track v3 (1.5M, Phase 0 + centering apretado)
+9. ✅ Hover Track v3.1 (500k, reward multiplicativa; **mejor: 400k**)
+10. ✅ Test espiral+SAC v3.1 con lemniscata (validación pipeline)
+11. ✅ Selección del checkpoint base para v4 (400k, composite 0.633)
 
-### Medio Plazo
-8. Fase 2: Target móvil lento (0.05 m/s) sin reentrenar → test de generalización
-9. Fase 3: Spawn off-axis + espiral para búsqueda inicial
-10. Tests de generalización: velocidades OOD, init no constrained
-
-### Largo Plazo
-11. Integrar percepción de profundidad si R_scale resulta insuficiente
-12. Entrenar agente con colisiones + seguimiento visual
-13. Obstáculos dinámicos
-14. Múltiples quadrotors
+### Pendiente
+12. ⚠️ Hover Track v4: completado pero no convergió (catastrophic forgetting en Phase C)
+13. Hover Track v4.1: nueva iteración con Phase C menos agresiva, mixed replay, episodios más cortos
+14. Tests de generalización: velocidades OOD, espiral con distancias >2m con v4.1
 
 ## 📚 Documentación
 

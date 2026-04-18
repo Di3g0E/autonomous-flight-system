@@ -425,13 +425,373 @@ python scripts/train_spiral_follow.py --timesteps 500000
 - **Curriculum de 2 fases**: ω_scale 0.3→1.0
 - **Modelo usado como fallback** por el `SpiralSearchController`
 
+## Entrenamiento Avanzado: Hover Tracking v3 con Phase 0 de Estabilización
+
+### 9. `train_hover_track_v3.py` — Curriculum de 4 Fases
+
+**Propósito**: Entrenar un agente SAC con una Phase 0 de estabilización pura (sin target) antes del tracking visual, y una gaussiana de centering más apretada para forzar precisión.
+
+**Uso**:
+```bash
+python scripts/train_hover_track_v3.py --timesteps 1500000 --no-display
+```
+
+**Características principales**:
+- **Phase 0** (0–8%): El target se mueve fuera del FOV; solo `R_survival + 2·R_stability + 2·R_vel_cancel`. El agente aprende a estabilizarse antes de intentar servoing visual.
+- **Fases A/B/C** (8–100%): R_centering más estrecha `4.0×exp(-6d²)` (sigma efectivo 0.41 vs 0.58 de v2). Episodios de 30s.
+- **R_center_vel**: Bonus por reducir distancia al centro (derivada negativa, clamped a [0,1]).
+- **GPU training**: `.vgpu` env con PyTorch+CUDA 12.8 — ~30-50% más rápido que CPU.
+
+**Configuración SAC v3**:
+```python
+learning_rate = 3e-4
+buffer_size = 500_000
+batch_size = 256
+net_arch = [256, 128]    # ~195k parámetros por red
+gamma = 0.995
+train_freq = 4
+ent_coef = 'auto'
+```
+
+**Resultados (1.5M steps)**:
+
+| Checkpoint | Surv% | Reward | Vis% | Cent. | Easy | Med | Hard |
+|---|---|---|---|---|---|---|---|
+| 750k | 66.7 | 2,174 | 74.0 | 0.616 | 100% | 80% | 20% |
+| 850k | 80.0 | 2,920 | 91.1 | 0.467 | 80% | 80% | 80% |
+| **900k** | **80.0** | **2,974** | 83.7 | 0.479 | **100%** | **100%** | 40% |
+| 1.5M | 86.7 | 2,102 | 75.9 | 0.658 | 80% | 80% | 100% |
+
+**Checkpoint recomendado: 900k** — excelente en easy/medium, base para fine-tune v3.1.
+
+---
+
+## Entrenamiento Avanzado: Hover Tracking v3.1 — Fine-Tune con Reward Multiplicativa
+
+### 10. `train_hover_track_v3_1.py` — Fine-Tune desde v3/900k
+
+**Propósito**: Fine-tune del mejor checkpoint v3 (900k) corrigiendo el desequilibrio de la reward aditiva (R_centering dominaba 4:1 sobre R_stability). La nueva reward hace que el tracking solo se cobre si el vuelo es estable.
+
+**Diagnóstico del problema**:
+```
+R v3 (aditiva):     total = R_stab(1.0) + R_cent(4.0) + R_vel(1.0) + R_scale(1.0) + R_inv(-1.0)
+Inestable+centrado: 0.2   + 4.0         + 0.5         + 0.5         -  0           = 5.2  ← casi igual
+Estable+centrado:   1.0   + 4.0         + 0.5         + 0.5         -  0           = 6.0
+```
+
+**Solución (reward v3.1 multiplicativa)**:
+```python
+R_tracking = R_centering + R_center_vel + R_scale           # 0 → 6.0
+total = R_stability × (R_tracking + 0.5) + R_vel_damp + R_smooth + R_invisible
+```
+
+| Escenario | R v3 | R v3.1 | Diferencia |
+|---|---|---|---|
+| Estable + centrado (stab=0.95, cent=4.0) | 6.95 | 6.68 | -4% |
+| Inestable + centrado (stab=0.20, cent=4.0) | 6.20 | 1.80 | **-71%** |
+| Estable sin centrar (stab=0.95, cent=0.5) | 1.75 | 1.74 | ~igual |
+
+**Nuevos componentes**:
+
+```python
+R_smooth  = -0.3 × ||action_t - action_{t-1}||²  # [-0.3, 0]  — suavidad de motores
+R_vel_damp = 0.5 × exp(-4 × ||vel||²)             # [0, 0.5]   — baja velocidad lineal durante tracking
+```
+
+**Uso**:
+```bash
+# Con el checkpoint recomendado (900k de v3)
+python scripts/train_hover_track_v3_1.py --no-display
+
+# Para seleccionar base manualmente
+python scripts/train_hover_track_v3_1.py \
+    --base-checkpoint ./models/hover_track_v3/checkpoints/model_900000_steps.zip
+```
+
+**Configuración del fine-tune**:
+```python
+learning_rate = 1e-4           # Reducido (3e-4 en v3) — actualizaciones conservadoras
+buffer_size = 500_000
+# ⚠️ Replay buffer vaciado: transiciones v3 tienen rewards incompatibles con v3.1
+# (magnitudes y gradientes distintos, corrupen los value estimates del critic)
+timesteps = 500_000
+curriculum = ['B', 'C']       # Sin Phase 0 ni A — el agente ya sabe volar
+```
+
+**Resultados de la evaluación formal** (30 episodios × checkpoint, target estático):
+
+| Checkpoint | Surv% | R. medio | Vis% | Cent. | Jerk | R_stab | Easy | Med | Hard |
+|---|---|---|---|---|---|---|---|---|---|
+| 100k | 40.0 | 2,044 | 54.8 | 0.701 | 0.068 | 0.947 | 60% | 50% | 10% |
+| 200k | 66.7 | 4,396 | 74.6 | 0.489 | 0.124 | 0.959 | 100% | 60% | 40% |
+| 300k | 53.3 | 4,114 | 77.6 | 0.538 | 0.131 | 0.950 | 60% | 60% | 40% |
+| **400k** | **93.3** | 6,112 | **92.6** | 0.452 | **0.123** | **0.990** | **100%** | **100%** | **80%** |
+| 500k | 83.3 | **6,577** | 86.7 | **0.396** | 0.201 | 0.990 | 100% | 80% | 70% |
+
+**Checkpoint ganador: 400k** — mayor supervivencia, menor jerk, mejor equilibrio entre tiers.
+
+**Outputs**:
+```
+models/hover_track_v3_1/
+├── best_model.zip
+├── training_log.csv          # métricas por episodio (incluye r_vel_damp, r_smooth, jerk)
+└── checkpoints/
+    ├── model_50000_steps.zip
+    ├── model_100000_steps.zip
+    ├── ...
+    └── model_500000_steps.zip
+
+experiments/hover_track_v3_1/
+├── checkpoint_comparison.json  # datos completos por checkpoint y tier
+├── checkpoint_episodes.csv
+├── checkpoint_global.png       # 8 paneles comparativos
+└── checkpoint_tiers.png        # boxplots de jerk por tier
+```
+
+---
+
+### 11. `tests/evaluate_hover_track_v3_1.py` — Evaluador Multi-Checkpoint
+
+**Propósito**: Evaluación cuantitativa controlada de todos los checkpoints del fine-tune v3.1 sobre 3 tiers de dificultad, con métricas extendidas (jerk, vel_damp, smooth).
+
+**Uso**:
+```bash
+python tests/evaluate_hover_track_v3_1.py --no-display
+python tests/evaluate_hover_track_v3_1.py --model-dir ./models/hover_track_v3_1 --episodes 15
+```
+
+**Tiers de evaluación** (target estático):
+| Tier | Offset init | Vel init | Descripción |
+|---|---|---|---|
+| `easy` | 0.3m | 0.10 m/s | Condiciones de Hover Track básico |
+| `medium` | 0.6m | 0.25 m/s | Target descentrado, inicio perturbado |
+| `hard` | 1.0m | 0.40 m/s | Condiciones post-espiral extremas |
+
+**Métricas registradas**: survival_rate, total_reward, visibility_pct, mean_centering_dist, mean_action_jerk, r_stability, r_centering, r_vel_damp, r_smooth.
+
+---
+
+### 12. `tests/test_spiral_track_v3_1.py` — Test Integración con Target Móvil
+
+**Propósito**: Evaluar los modelos v3.1 en el escenario de uso real: objetivo en movimiento (lemniscata de Bernoulli), con FSM de 2 estados que activa la espiral RL cuando el target se pierde.
+
+**Fórmula de la lemniscata**:
+```
+x(t) = a·cos(t) / (1 + sin²(t))
+y(t) = a·sin(t)·cos(t) / (1 + sin²(t))
+velocidad 0.3 m/s → ω ≈ 0.6 rad/s
+```
+
+**FSM simplificada** (sin BRAKE ni HANDOFF):
+```python
+class SpiralTrackFSM:
+    # TRACK → SEARCH: k=20 steps consecutivos sin target
+    # SEARCH → TRACK: inmediato al detectar target
+    def get_action(self, obs19, target_visible, sac_model, state13, ...):
+        if self._state == TRACK:
+            if not target_visible:
+                self._invisible_count += 1
+                if self._invisible_count >= self.k_invisible:
+                    self._state = SEARCH
+                    self._reset_spiral(pos_x, pos_y)
+            else:
+                self._invisible_count = 0
+        elif self._state == SEARCH:
+            if target_visible:
+                self._state = TRACK
+                self._invisible_count = 0
+        if self._state == SEARCH:
+            spiral_obs = self._build_spiral_obs(state13)   # 18-D
+            return spiral_model.predict(spiral_obs, deterministic=True)
+        return sac_model.predict(obs19, deterministic=True)
+```
+
+**Uso**:
+```bash
+python tests/test_spiral_track_v3_1.py --no-display
+python tests/test_spiral_track_v3_1.py --models 400k 500k --episodes 10
+```
+
+**Escenarios** (4 niveles):
+
+| Escenario | Speed | Offset | Vel init | Descripción |
+|---|---|---|---|---|
+| `slow_easy` | 0.10 m/s | 0.3m | 0.10 m/s | ≈ v4 Phase A |
+| `medium` | 0.22 m/s | 0.6m | 0.20 m/s | ≈ v4 Phase B |
+| `fast_hard` | 0.35 m/s | 1.0m | 0.35 m/s | ≈ v4 Phase C |
+| `recovery` | 0.20 m/s | 2.5m | 0.30 m/s | Recuperación extrema |
+
+**Resultados clave**:
+
+| Modelo | Slow Easy | Medium | Fast Hard | Recovery | Jerk | Post-handoff |
+|---|---|---|---|---|---|---|
+| 150k | ~40% | **0%** | ~0% | ~0% | — | 0.82 |
+| 250k | ~60% | ~40% | ~20% | ~20% | — | 0.85 |
+| **400k** | ~80% | 60% | ~40% | ~40% | **0.123** | 0.839 |
+| 500k | ~80% | 80% | ~40% | ~40% | 0.201 | 0.795 |
+
+**Puntuación compuesta (target estático + target móvil)**:
+- 400k: 0.633 (GANADOR)
+- 500k: 0.595
+
+---
+
+## Entrenamiento Avanzado: Hover Tracking v4 — Objetivo Móvil
+
+### 13. `scripts/train_hover_track_v4.py` — Fine-Tune con Target en Lemniscata
+
+**Propósito**: Primer entrenamiento del proyecto con objetivo dinámico para el SAC. Fine-tune del mejor checkpoint v3.1 (400k) con target que sigue una lemniscata de Bernoulli.
+
+**Decisión de diseño — Eliminar BRAKE y HANDOFF**:
+
+El pipeline clásico (v3.1) tenía 5 estados:
+```
+STABILIZE → SEARCH → BRAKE → HANDOFF → TRACK
+```
+
+En v4 se simplifica a 2:
+```
+SEARCH ←→ TRACK
+```
+
+**Justificación**: El curriculum Phase C de v4 entrena al SAC en las mismas condiciones que BRAKE/HANDOFF gestionaban (vel_init hasta ±0.60 m/s, offset hasta 1.2m). El SAC v4 aprenderá implícitamente a manejar la transición post-espiral sin controladores intermedios, creando un agente más robusto e independiente.
+
+**Uso**:
+```bash
+# Con checkpoint recomendado (v3.1/400k)
+python scripts/train_hover_track_v4.py \
+    --base-checkpoint ./models/hover_track_v3_1/checkpoints/model_400000_steps.zip
+
+# Auto-detección del mejor disponible
+python scripts/train_hover_track_v4.py --timesteps 750000 --no-display
+```
+
+**Clase `MovingTargetV4Wrapper`**:
+
+Wrapper que posiciona el dron encima del target en cada reset (en lugar de mover el target):
+
+```python
+class MovingTargetV4Wrapper(Panda3DQuadrotorEnv):
+    def reset(self, seed=None, options=None):
+        self.target_speed = np.random.uniform(*self.target_speed_range)
+        obs, info = super().reset(seed=seed, options=options)
+        state = self.base_env.state.copy()
+        # Posicionar dron encima del target con offset aleatorio
+        state[0] = self.target_pos[0] + dx    # x
+        state[2] = self.target_pos[1] + dy    # y
+        state[4] = self.target_pos[2] + self.hover_height  # z
+        self.base_env.state = state
+        # Sincronización completa del pipeline Panda3D
+        self._update_visualization()
+        self.panda3d_app.graphicsEngine.renderFrame()
+        self._capture_camera_images(force_capture=True)
+        obs = self._build_observation(state.astype(np.float32))
+        return obs, info
+```
+
+⚠️ **`min_start_distance = 0.0`**: Anula el default de 3.0m del modo moving — el target empieza en cualquier fase de su lemniscata.
+
+**Curriculum de 3 fases (`CurriculumV4Callback`)**:
+
+| Fase | Progreso | Speed target | Offset | Vel init | Simula |
+|---|---|---|---|---|---|
+| A | 0–30% | 0.05→0.15 m/s | 0.2→0.4m | 0.10→0.15 m/s | Movimiento suave, perturbación leve |
+| B | 30–65% | 0.15→0.25 m/s | 0.4→0.7m | 0.15→0.30 m/s | Velocidad media, inicio descentrado |
+| C | 65–100% | 0.25→0.40 m/s | 0.7→1.2m | 0.30→0.60 m/s | Velocidad alta, condiciones post-espiral |
+
+**Auto-detección del checkpoint base**:
+```python
+def find_best_model():
+    candidates = [
+        './models/hover_track_v3_1/best_model.zip',
+        './models/hover_track_v3/checkpoints/model_900000_steps.zip',
+        './models/hover_track_v3/best_model.zip',
+    ]
+    for c in candidates:
+        if Path(c).exists():
+            return c
+```
+
+**Configuración del fine-tune v4**:
+```python
+learning_rate = 1e-4      # Conservador (igual que v3.1)
+buffer_size = 500_000
+# ⚠️ Replay buffer vaciado: transiciones v3.1 (target estático)
+#    son incompatibles con dinámicas de target móvil
+timesteps = 750_000       # 250k más que v3.1 — target móvil es más difícil
+```
+
+**Análisis de reward**: R_vel_damp sin cambios — pérdida de 0.15/step a 0.3 m/s = 3.75% de la señal de centering → completamente negligible.
+
+**Métricas de monitorización adicionales**:
+- `target_speed_mean`: velocidad media del target en el episodio (debe crecer con el curriculum)
+- `mean_action_jerk`: debe mantenerse ≤0.123 (valor del 400k base)
+
+**Outputs**:
+```
+models/hover_track_v4/
+├── best_model.zip
+├── training_log.csv
+└── checkpoints/
+    └── model_XXXXXX_steps.zip
+
+experiments/hover_track_v4/
+├── checkpoint_comparison.json
+├── checkpoint_episodes.csv
+├── checkpoint_global.png
+└── checkpoint_tiers.png
+```
+
+---
+
+### 14. `tests/evaluate_hover_track_v4.py` — Evaluador con Tiers de Velocidad
+
+**Propósito**: Evaluación de los checkpoints v4 con tiers basados en **velocidad del target** (no en offset estático como v3.1).
+
+**Uso**:
+```bash
+python tests/evaluate_hover_track_v4.py --no-display
+python tests/evaluate_hover_track_v4.py --model-dir ./models/hover_track_v4 --episodes 10
+```
+
+**Tiers de evaluación** (target móvil en lemniscata):
+
+| Tier | Speed | Offset | Vel init | Equivalencia |
+|---|---|---|---|---|
+| `slow` | 0.10 m/s | 0.3m | 0.10 m/s | v4 Phase A |
+| `medium` | 0.25 m/s | 0.6m | 0.25 m/s | v4 Phase B |
+| `fast` | 0.40 m/s | 1.0m | 0.40 m/s | v4 Phase C |
+
+**Diferencia clave respecto a evaluate_hover_track_v3_1**: En v4, cada episodio usa el `MovingTargetV4Wrapper` — el dron se posiciona encima del target (con offset del tier) y el target comienza a moverse desde el instante 0. La evaluación es coherente con el entorno de entrenamiento.
+
+**Métricas adicionales para target móvil**:
+- `target_speed_actual`: velocidad real del target durante el episodio
+- `drift_accumulated`: distancia media dron-target a lo largo del episodio (cuantifica seguimiento lateral)
+
+---
+
+## Resumen de Scripts por Versión
+
+| Script | Tipo | Algoritmo | Base | Timesteps | Estado |
+|---|---|---|---|---|---|
+| `train_hover_track.py` | Entrenamiento | SAC | Scratch | 200k | ✅ Completado |
+| `train_hover_track_v2.py` | Entrenamiento | SAC | v1 | 500k | ✅ Completado |
+| `train_hover_track_v3.py` | Entrenamiento | SAC | Scratch | 1.5M | ✅ Completado |
+| `train_hover_track_v3_1.py` | Fine-tune | SAC | v3/900k | 500k | ✅ Completado |
+| `train_hover_track_v4.py` | Fine-tune | SAC | v3.1/400k | 750k | ⏳ Pendiente |
+| `evaluate_hover_track_v3_1.py` | Evaluación | — | v3.1 checkpoints | — | ✅ Completado |
+| `evaluate_hover_track_v4.py` | Evaluación | — | v4 checkpoints | — | ⏳ Pendiente |
+| `test_spiral_track_v3_1.py` | Integración | SAC+PPO | v3.1 | — | ✅ Completado |
+
 ## Próximos Pasos
 
-1. **Extender hover-track**: +100-200k steps para convergencia completa (centering < 0.25).
-2. **Evaluar con espiral**: Validar handoff TRACK→SEARCH→HANDOFF con vídeos.
-3. **Target móvil**: Probar generalización con target lento (0.05 m/s) sin reentrenar.
-4. **Fase 2**: Entrenar con target móvil (lemniscata) manteniendo obs 19-D.
-5. **Spawn off-axis**: Fase 3 con búsqueda espiral al inicio del episodio.
+1. ✅ ~~Extender hover-track~~ **v3.1 completado**
+2. ✅ ~~Evaluar con espiral~~ **test_spiral_track_v3_1 completado**
+3. ✅ ~~Seleccionar checkpoint para v4~~ **400k recomendado**
+4. **Entrenar v4**: `python scripts/train_hover_track_v4.py --base-checkpoint ./models/hover_track_v3_1/checkpoints/model_400000_steps.zip --no-display`
+5. **Evaluar v4**: `python tests/evaluate_hover_track_v4.py --no-display`
+6. **Validar pipeline simplificado**: Confirmar que SEARCH→TRACK directo funciona sin BRAKE/HANDOFF
+7. **Tests de generalización**: Velocidades OOD (0.50+ m/s), espiral con offsets >2m
 
 ## Referencias
 

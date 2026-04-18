@@ -3181,18 +3181,146 @@ Se combinaron dos fuentes de datos con igual peso:
 - `src/envs/panda3d_quadrotor_env.py` — No se modificó la reward v3.1 (análisis confirmó que R_vel_damp no penaliza seguimiento)
 - `models/hover_track_v3_1/` — Todos los checkpoints preservados
 
-### Próximos Pasos
+---
 
-1. **Ejecutar entrenamiento v4**:
-   ```bash
-   cd UAV_3D_Virtual_Env-master
-   python scripts/train_hover_track_v4.py \
-       --base-checkpoint ./models/hover_track_v3_1/checkpoints/model_400000_steps.zip \
-       --timesteps 750000 --no-display
-   ```
-2. **Monitorizar métricas clave**: `target_speed_mean` (el agente debe estar siguiendo targets progresivamente más rápidos), `mean_action_jerk` (debe mantenerse bajo o decrecer respecto al 400k base), `survival_rate` por fase.
-3. **Evaluar checkpoints v4**: Ejecutar `evaluate_hover_track_v4.py` con los tiers de velocidad.
-4. **Integrar en pipeline**: Validar que el SAC v4 hace transición directa SEARCH→TRACK sin BRAKE/HANDOFF, confirmando la hipótesis de robustez del curriculum.
+## [Fecha: 2026-04-14 → 2026-04-17] - Entrenamiento v4 Completado y Evaluación de Resultados
+
+### E9. Entrenamiento Hover Track v4 (Fine-Tune con Target Móvil)
+
+**Fecha**: 2026-04-14 → 2026-04-17 | **Tipo**: Fine-tune SAC
+**Script**: `scripts/train_hover_track_v4.py`
+**Salida**: `models/hover_track_v4/`
+
+| Parámetro | Valor |
+|---|---|
+| Algoritmo | SAC |
+| Base model | `models/hover_track_v3_1/checkpoints/model_400000_steps.zip` |
+| Observación | 19-D flat (mismo que v3.1) |
+| Política | MlpPolicy [256, 128] — 195,724 parámetros |
+| Timesteps | 750,000 |
+| Learning rate | 1e-4 |
+| Replay buffer | Vaciado al inicio |
+| Tiempo total | **79,086s (~21.97 horas)** |
+| Episodios completados | 7,171 |
+| Reward final (rolling) | 9.45 |
+| Fase final | C |
+| Lemniscata scale | 2.0m |
+
+**Curriculum ejecutado**:
+
+| Fase | Steps | Speed target | Offset | Vel init | Episodios aprox. |
+|---|---|---|---|---|---|
+| A | 0–225k | 0.05→0.15 m/s | 0.2→0.4m | 0.10→0.15 m/s | ~335 |
+| B | 225k–487.5k | 0.15→0.25 m/s | 0.4→0.7m | 0.15→0.30 m/s | ~1,550 |
+| C | 487.5k–750k | 0.25→0.40 m/s | 0.7→1.2m | 0.30→0.60 m/s | ~5,280 |
+
+**Estadísticas de entrenamiento por fase** (solo episodios con ≥100 steps):
+
+| Fase | N episodios | R. medio | Vis% | Centering | Mejor episodio |
+|---|---|---|---|---|---|
+| A | 267 | -166.1 | 30.1% | 0.682 | ep335: R=1938, vis=97.1%, steps=986 |
+| B | 587 | **+245.5** | 69.6% | 0.704 | ep1635: R=2228, vis=98.7%, steps=1224 |
+| C | 710 | +236.5 | 85.7% | 0.698 | ep6505: R=1242, vis=99.6%, steps=777, speed=0.37 |
+
+**Observaciones clave del training**:
+
+1. **Phase A (0–225k)**: El modelo hereda el comportamiento de tracking de v3.1/400k pero se desorienta con el target en movimiento. La mayor parte de los episodios duran <100 steps, terminando en crash al perder visibilidad y acumular velocidad lateral. La recompensa media es negativa (-166) aunque hay algunos episodios excelentes (ep335: R=1938).
+
+2. **Phase B (225k–487.5k)**: El modelo aprende significativamente a seguir el target a velocidades medias (0.15–0.25 m/s). Los 587 episodios largos muestran R_medio=245.5 y vis=69.6%. El mejor episodio de toda la fase (ep1635: vis=98.7%) demuestra que el agente puede mantener el target en cámara casi continuamente.
+
+3. **Phase C (487.5k–750k)**: La gran paradoja — los episodios largos (≥100 steps) muestran vis=85.7% y R_medio=236.5, incluso mejor que Phase B. Sin embargo, la mayoría de episodios en Phase C duran solo 15–40 steps (de 3000 máx), creando un dataset dominado por experiencias de fallo. Esto provoca que la media rolling caiga a 9.45.
+
+### E9-Eval. Evaluación Cuantitativa de Checkpoints v4
+
+**Fecha**: 2026-04-17 | **Tipo**: Evaluación con target móvil
+**Script**: `tests/evaluate_hover_track_v4.py`
+**Salida**: `experiments/hover_track_v4/`
+
+**Configuración**:
+- Checkpoints: 200k, 300k, 400k, 500k, 750k, best_model
+- 5 episodios por tier
+- Duración: 20s (2,000 steps)
+- Tiers: slow (speed=0.1, off=0.3m, vel=0.1), medium (speed=0.25, off=0.6m, vel=0.25), fast (speed=0.4, off=1.0m, vel=0.4)
+
+**Resultados de la evaluación**:
+
+| Checkpoint | Surv% | R. medio | Vis% | Cent. | Jerk | R_stab | Slow | Med | Fast |
+|---|---|---|---|---|---|---|---|---|---|
+| 200k | **6.7** | -43.6 | 16.5 | 0.734 | 0.093 | 0.928 | 0% | 20% | 0% |
+| 300k | 0.0 | 47.2 | 33.6 | 0.560 | 0.100 | 0.807 | 0% | 0% | 0% |
+| 400k | 0.0 | 64.3 | 33.8 | 0.647 | 0.110 | 0.647 | 0% | 0% | 0% |
+| 500k | 0.0 | 54.8 | 35.1 | 0.502 | 0.106 | 0.570 | 0% | 0% | 0% |
+| 750k | 0.0 | 36.0 | 40.7 | 0.459 | 0.103 | 0.586 | 0% | 0% | 0% |
+| best | 0.0 | 35.4 | 41.1 | 0.459 | 0.103 | 0.590 | ~0% | ~0% | ~0% |
+
+**Resultado global: 0% supervivencia en todos los tiers y checkpoints (excepto 200k en medium=20%).**
+
+### Análisis del Fallo de v4 — Diagnóstico
+
+El entrenamiento v4 completó 750k steps y generó 7,171 episodios, pero el modelo no convergió hacia un seguimiento estable del objetivo móvil. A continuación el análisis de las causas:
+
+#### 1. Catastrophic Forgetting en Phase C
+
+El problema más crítico. La Phase C usa condiciones extremas (vel_init=0.30–0.60 m/s, offset=0.7–1.2m) que generan episodios muy cortos (15–40 steps dominantemente). El replay buffer termina saturado con experiencias de fallo de Phase C, sobrescribiendo las transiciones exitosas de Phase A/B.
+
+**Evidencia**: La R_stability cae de 0.928 (200k, aún en Phase A) a 0.586 (750k, Phase C completa). El agente "olvidó" cómo volar estable al intentar adaptarse a las condiciones extremas.
+
+| Checkpoint | R_stability | Interpretación |
+|---|---|---|
+| 200k | 0.928 | Hereda la estabilidad de v3.1/400k |
+| 300k | 0.807 | Inicio de Phase B, estabilidad cae |
+| 400k | 0.647 | Phase B media, inestabilidad creciente |
+| 500k | 0.570 | Inicio Phase C, degradación severa |
+| 750k | 0.586 | Phase C completa, estabilidad mínima |
+
+#### 2. Episode Length Desequilibrado
+
+Phase C genera ~5,280 episodios pero la mayoría duran <100 steps. Esto significa que el agente recibe miles de actualizaciones de gradient basadas en "el dron se cayó inmediatamente" — la señal de gradient válida (episodios largos con tracking real) es una fracción pequeña del total.
+
+**Contraste**:
+- Phase B: 587 episodios largos de 1,550 totales = 37.9% de episodios con información útil
+- Phase C: 710 episodios largos de 5,280 totales = 13.4% de episodios con información útil
+
+#### 3. Evaluación con Duración de 20s (2000 steps)
+
+La evaluación pide al modelo mantener el target en cámara durante 20s completos. En Phase C, incluso los mejores episodios del training duraban solo ~800 steps (8s). El modelo nunca fue expuesto durante training a episodios de 20s en Phase C — la evaluación exige comportamientos fuera del horizonte de entrenamiento.
+
+#### 4. Condiciones de Phase C son ~3-4× más duras que las del training v3.1
+
+El v3.1 fue evaluado con offset_max=1.0m, vel_init_max=0.40 m/s. Phase C usa offset hasta 1.2m y vel hasta 0.60 m/s — condiciones que ningún checkpoint anterior había visto. El salto es demasiado grande para un fine-tune conservador (LR=1e-4).
+
+### Recomendaciones para Iteración v4.1
+
+Basándose en el diagnóstico, las mejoras para la siguiente iteración son:
+
+| Problema | Recomendación |
+|---|---|
+| Catastrophic forgetting | Alternar episodios Phase A/B en Phase C (10% de episodios con condiciones fáciles) |
+| Episode length demasiado corto | Reducir duración máxima Phase C a 1500 steps (15s); permite más episodios con tracking real |
+| Jump de dificultad demasiado alto | Phase C máx: vel=0.40 m/s (no 0.60), offset=0.8m (no 1.2m) |
+| Buffer saturado con fallos | Buffer_size reducido a 200k para mayor rotación; o usar Prioritized Experience Replay |
+| LR insuficiente para olvido controlado | Aumentar a 2e-4 en Phase C (más adaptación, menor inercia de Phase A/B) |
+
+**Comando para v4.1 (hipotético)**:
+```bash
+python scripts/train_hover_track_v4.py \
+    --base-checkpoint ./models/hover_track_v4/checkpoints/model_300000_steps.zip \
+    --phase-c-max-vel 0.40 --phase-c-max-offset 0.8 \
+    --mixed-replay-ratio 0.1 --timesteps 500000
+```
+*(nota: los flags adicionales requerirían implementar las mejoras en el script)*
+
+### Archivos Generados
+
+**Nuevos**:
+- `models/hover_track_v4/training_log.csv` — 7,171 episodios × 20 métricas
+- `models/hover_track_v4/training_summary.json` — resumen completo del entrenamiento
+- `models/hover_track_v4/best_model.zip` — mejor modelo según EvalCallback
+- `models/hover_track_v4/checkpoints/` — checkpoints cada 50k steps
+- `experiments/hover_track_v4/checkpoint_comparison.json` — evaluación multi-checkpoint
+- `experiments/hover_track_v4/checkpoint_episodes.csv` — por episodio
+- `experiments/hover_track_v4/checkpoint_global.png` — comparativa visual
+- `experiments/hover_track_v4/checkpoint_tiers.png` — por tier de velocidad
 
 ---
 
@@ -3210,7 +3338,203 @@ Se combinaron dos fuentes de datos con igual peso:
 | Hover track v2 | Hover Track v2 | ~14h |
 | Hover track v3 | Hover Track v3 | ~15h |
 | Hover track v3.1 | Hover Track v3.1 | ~7.5h |
-| **Total acumulado** | | **~420 horas** |
+| Hover track v4 | Hover Track v4 | ~22h |
+| **Total acumulado** | | **~442 horas** |
+
+---
+
+## [Fecha: 2026-04-18] - Hover Track v4.1: Re-entrenamiento Corregido con Curriculum Revisado y Crash Penalty
+
+### Motivación
+
+Tras el fallo del entrenamiento v4 (0% survival global en evaluación, documentado el 17-04-2026), se decidió re-entrenar una versión corregida (v4.1) atacando las causas raíz identificadas en el diagnóstico. En lugar de entrenar desde cero — opción descartada tras analizar los datos, pues v3.1 ya había demostrado que el transfer learning desde un checkpoint estable converge en ~500k steps — se aplicaron cuatro cambios quirúrgicos al script de entrenamiento v4 existente para corregir los problemas sin alterar la arquitectura de recompensa v3.1 (multiplicative gating) que está validada.
+
+### Análisis de selección del modelo base v3.1 para v4.1
+
+El script v4 original cargaba el modelo desde `models/hover_track_v3_1/best_model.zip`, pero la inspección por timestamp reveló que ese archivo corresponde al checkpoint **500k** (9 Apr 14:41), no al 400k. Los datos de evaluación de v3.1 (checkpoint_comparison.json) muestran que el 400k es superior al 500k para uso como base de fine-tuning:
+
+| Checkpoint | Easy Survival | Medium Survival | Hard Survival | Global Survival |
+|---|---|---|---|---|
+| 200k | 100% | 60% | 40% | ~67% |
+| 300k | 60% | 60% | 40% | ~53% |
+| **400k** | **100%** | **100%** | **80%** | **~93%** |
+| 500k | 100% | 80% | 70% | 83% |
+
+El checkpoint 400k tiene **10 puntos porcentuales más de survival global** y mejores métricas en los tiers Medium/Hard (los más relevantes para un target móvil). El 500k muestra ligera regresión — probable overfit a escenarios fáciles durante los últimos 100k steps. Para v4.1 se decidió usar explícitamente `model_400000_steps.zip` como base.
+
+Se descartó entrenar desde cero porque:
+- v3.1 partió de v3 (900k) y requirió solo 500k steps adicionales para superarlo.
+- v4 partió de v3.1 (400k) y consiguió llegar a Phase B funcional antes del colapso.
+- Entrenar desde cero para target móvil requeriría ~1.5-2M steps para alcanzar la base actual.
+- El fallo de v4 no es de transfer learning, es de diseño del curriculum y de la función de reward (ausencia de penalización explícita a crashes).
+
+### Los cuatro cambios de v4.1
+
+| # | Cambio | Motivación |
+|---|---|---|
+| 1 | Cargar explícitamente `model_400000_steps.zip` de v3.1 como base | Mayor survival (93% vs 83%) y mejor robustez ante perturbaciones que el `best_model.zip` (500k) |
+| 2 | Reducir `target_speed` máximo de Phase C: 0.40 → 0.25 m/s | Los datos de evaluación v4 muestran 0% survival a 0.40 m/s. La física del dron no puede seguir targets a esa velocidad con fiabilidad. |
+| 3 | Alargar Phase B y acortar Phase C: 30-65-100 → 30-75-100 | Consolidar 45% del training en velocidades medias (0.15-0.25 m/s) antes de saltar al régimen más exigente |
+| 4 | Añadir penalización por crash en el reward (proporcional a pasos restantes) | El survival 0% con reward acumulado positivo (+35 en 750k) indica que el agente aprende equilibrios estáticos en lugar de sobrevivir. La penalización rompe ese equilibrio. |
+
+### Comparación con las recomendaciones previas (17-04-2026)
+
+La iteración anterior había propuesto cinco mejoras hipotéticas. Se evaluó cada una:
+
+| Recomendación previa | Decisión v4.1 | Justificación |
+|---|---|---|
+| Alternar episodios Phase A/B en Phase C (mixed-replay) | **Descartada** | Requiere modificar el sampler de SAC; mayor complejidad. Se aborda indirectamente acortando Phase C. |
+| Reducir duración máxima Phase C a 1500 steps | **Descartada** | Mantener episode length consistente (3000 steps) evita desalineación entre curriculum y evaluación. |
+| Phase C máx: vel=0.40, offset=0.8m | **Parcialmente aplicada** | Velocidad reducida a 0.25 (más conservador que 0.40). Offset se mantiene en 1.2m — el problema no está ahí según los datos. |
+| Buffer size reducido o PER | **Descartada** | Cambio de algoritmo; alto riesgo; sin evidencia de que el buffer sea el cuello de botella. |
+| Aumentar LR a 2e-4 en Phase C | **Descartada** | Aumentaría el catastrophic forgetting — efecto opuesto al deseado. Mantener LR=1e-4. |
+
+Decisión añadida: **crash penalty** — no estaba en las recomendaciones anteriores, pero surgió del análisis del reward structure: con `enable_collisions=False`, la única señal negativa por crash era la truncación del episodio (pérdida de pasos futuros), pero el agente aprendía a maximizar reward por step en episodios cortos estáticos.
+
+### Errores identificados durante el análisis crítico
+
+Antes de implementar, se realizó un análisis de posibles fallos que cada cambio podía introducir:
+
+| # | Error potencial | Solución aplicada |
+|---|---|---|
+| 1 | `best_model.zip` de v3.1 no es el 400k | Pasar explícitamente la ruta al 400k en `--base-checkpoint` y actualizar `find_best_model()` |
+| 2 | `enable_collisions=False` impide aplicar un collision_penalty real | Usar la terminación del episodio (que ya ocurre por timeout/boundary) como proxy de crash, penalizando proporcional a pasos restantes |
+| 3 | `--phase-c 0.75` sin recalcular la interpolación de velocidades | Verificado: las fórmulas usan umbrales en timesteps absolutos, se adaptan automáticamente |
+| 4 | Phase C sigue subiendo hasta 0.40 si solo se cambia el umbral | Añadir argumento `--max-speed-c` que cambia el coeficiente de interpolación a `max_hi - 0.25` |
+| 5 | Sobreescritura del `best_model.zip` de v4 original | Cambiar `--output-dir` por defecto a `./models/hover_track_v4_1` |
+| 6 | Crash penalty demasiado grande inhibe exploración | Escalar: `max(10, 0.02 × remaining_steps)` — rango dinámico 10-60, proporcional al daño real |
+
+### Cambios implementados en el código
+
+**Archivo**: `scripts/train_hover_track_v4.py`
+
+1. **`find_best_model()`**: añadido `models/hover_track_v3_1/checkpoints/model_400000_steps.zip` como primera opción.
+
+2. **CLI args añadidos**:
+   - `--max-speed-c` (default `0.25`) — cap de velocidad en Phase C
+   - `--crash-penalty-base` (default `10.0`) — penalización base, escalada por pasos restantes
+
+3. **CLI args modificados**:
+   - `--phase-c` default `0.65` → `0.75`
+   - `--output-dir` default `./models/hover_track_v4` → `./models/hover_track_v4_1`
+
+4. **`CurriculumV4Callback`**: nuevo parámetro `max_speed_c`. Bloque de Phase C reescrito:
+   ```python
+   # Antes: speed_hi = 0.25 + p * 0.15  →  0.25 → 0.40
+   max_hi = self.max_speed_c
+   max_lo = max(0.15, max_hi - 0.05)
+   speed_lo = 0.15 + p * (max_lo - 0.15)     # 0.15 → max_lo
+   speed_hi = 0.25 + p * (max_hi - 0.25)     # 0.25 → max_hi
+   ```
+   Con `max_speed_c=0.25` (default), Phase C mantiene `speed_hi=0.25` constante y `speed_lo` sube de 0.15 a 0.20.
+
+5. **`MovingTargetV4Wrapper.step()`** (método sobrescrito): nuevo bloque al final:
+   ```python
+   if terminated:
+       max_steps = self.base_env.n
+       remaining = max(0, max_steps - self._step_counter)
+       crash_penalty = -max(
+           self.crash_penalty_base,
+           0.02 * remaining,
+       )
+       reward += crash_penalty
+       info['visual_tracking']['crash_penalty'] = crash_penalty
+   ```
+   Rango efectivo de la penalización con `max_ep_steps=3000`:
+   - Crash en step 100: penalty ≈ -58 (crash temprano, muy castigado)
+   - Crash en step 1500: penalty ≈ -30
+   - Crash en step 2700: penalty ≈ -10 (mínimo)
+
+6. **`save_metrics`**: se añaden `max_speed_c`, `crash_penalty_base` y los nuevos cambios en `v4_changes`.
+
+La implementación del crash penalty se localiza en el **wrapper específico de v4** (`MovingTargetV4Wrapper` en el propio script), no en `panda3d_quadrotor_env.py`, para no afectar a otros entrenamientos que comparten el entorno base.
+
+### Sanity test ejecutado
+
+Antes de lanzar el entrenamiento completo (750k steps ≈ 22h), se ejecutó un sanity test de 5000 steps para verificar que:
+
+**Comando**:
+```bash
+python scripts/train_hover_track_v4.py \
+    --timesteps 5000 \
+    --checkpoint-freq 5000 \
+    --record-interval 999 \
+    --output-dir models/hover_track_v4_1_sanity \
+    --no-display
+```
+
+**Resultados validados**:
+
+| Verificación | Estado | Evidencia |
+|---|---|---|
+| Carga del checkpoint 400k | ✅ | Log: `Loading base checkpoint: model_400000_steps.zip` |
+| Transición Phase A→B a 30% | ✅ | Disparada en step 1516 (30.3%) |
+| Transición Phase B→C a 75% | ✅ | Disparada en step 3752 (75.0%) |
+| Phase C: `speed_hi = 0.25` constante | ✅ | Log: `Phase C spd=0.25` de step 3752 a 4988 |
+| Offset Phase C 0.70 → 1.20m | ✅ | 0.70m (step 3752) → 1.20m (step 4988) |
+| Crash penalty activo | ✅ | Episodios de 59-130 steps con reward -90 a -177 (sin penalty serían ~0) |
+| Output dir separado | ✅ | `models/hover_track_v4_1_sanity/` (preserva v4 original) |
+| CSV + summary + best_model generados | ✅ | 45 episodios en CSV + timelapse |
+
+**Observación clave del sanity**: los primeros episodios tienen reward muy negativo (-164 a -177) porque el modelo base v3.1/400k está entrenado para target estático y, al encontrar un target móvil (lemniscate), pierde el tracking rápido y se acumula el crash penalty. Esto es **esperado** durante los primeros miles de steps — SAC necesita ~1000 steps de warmup antes de actualizar la política, y la adaptación real al régimen móvil llega más tarde.
+
+### Comando para el training completo v4.1
+
+```bash
+python scripts/train_hover_track_v4.py \
+    --timesteps 750000 \
+    --checkpoint-freq 50000 \
+    --record-interval 25 \
+    --record-fps 10
+```
+
+Con los defaults configurados, esto equivale a:
+- `--base-checkpoint models/hover_track_v3_1/checkpoints/model_400000_steps.zip`
+- `--phase-b 0.30 --phase-c 0.75`
+- `--max-speed-c 0.25`
+- `--crash-penalty-base 10.0`
+- `--output-dir models/hover_track_v4_1`
+
+Mantiene `--record-interval 25` para documentar progreso visual del training. Duración estimada: ~22h (comparable al v4 original para permitir comparativa 1:1).
+
+### Criterios de éxito para v4.1
+
+Comparado con v4 original (survival global 0%, reward +35 ± 125):
+
+- **Mínimo aceptable**: survival global ≥ 20%, reward > +500 en evaluación global
+- **Objetivo**: survival Slow ≥ 60%, Medium ≥ 40%, Fast (0.25 m/s) ≥ 20%
+- **Éxito**: R_stability final > 0.8 (vs 0.586 de v4) — indica que no hay catastrophic forgetting
+
+Señales de alerta durante el training que justificarían parar y revisar:
+- R_stability < 0.5 sostenida en Phase A (crash penalty demasiado agresivo)
+- Reward < -500 por episodio en Phase A (el agente no recupera la estabilidad del v3.1)
+- Visibility < 10% en Phase B (offset inicial demasiado grande para el modelo actual)
+
+### Archivos Afectados
+
+**Modificados**:
+- `scripts/train_hover_track_v4.py` — 4 bloques principales (find_best_model, CLI args, CurriculumV4Callback, MovingTargetV4Wrapper.step)
+
+**Generados en el sanity test**:
+- `models/hover_track_v4_1_sanity/best_model.zip`
+- `models/hover_track_v4_1_sanity/training_log.csv` (45 episodios)
+- `models/hover_track_v4_1_sanity/training_summary.json`
+- `models/hover_track_v4_1_sanity/checkpoints/model_5000_steps.zip`
+- `models/hover_track_v4_1_sanity/recordings/v4_training_timelapse.mp4`
+
+**Pendientes de generar** (en training full):
+- `models/hover_track_v4_1/best_model.zip`
+- `models/hover_track_v4_1/training_log.csv`
+- `models/hover_track_v4_1/training_summary.json`
+- `models/hover_track_v4_1/checkpoints/` (cada 50k steps)
+- `models/hover_track_v4_1/recordings/` (vídeos cada 25 episodios + timelapse)
+
+### Siguientes Pasos
+
+1. Lanzar training completo v4.1 (750k steps, ~22h).
+2. Evaluación cuantitativa multi-checkpoint (replicando el protocolo de v4): tiers Slow/Medium/Fast con 5 episodios cada uno.
+3. Comparativa directa v4 vs v4.1 (mismo protocolo, mismos tiers) para aislar la contribución de cada uno de los 4 cambios.
+4. Si v4.1 converge: extender el análisis a un tier adicional "Fast+" con speed=0.30 para validar si el cap de 0.25 es realmente el techo de la física.
 
 ---
 
