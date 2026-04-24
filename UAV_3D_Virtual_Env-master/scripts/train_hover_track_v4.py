@@ -16,23 +16,32 @@ No BRAKE or HANDOFF states:  the hard curriculum tier (high velocity,
 large offset) trains the agent to recover from post-spiral conditions
 directly.
 
-Curriculum (3 phases, re-tuned v4.1 defaults)
+Curriculum (3 phases, re-tuned v4.2 defaults)
 ---------------------------------------------
-  A [0 %, 30 %)    speed 0.05→0.15, offset 0.2→0.4 m, easy init
-  B [30 %, 75 %)   speed 0.15→0.25, offset 0.4→0.7 m, medium init
-  C [75 %, 100 %]  speed capped @ 0.25 m/s, offset 0.7→1.2 m, hard init
+  A [0 %, 20 %)    speed 0.05→0.15, offset 0.2→0.4 m, easy init
+  B [20 %, 80 %)   speed 0.15→0.25, offset 0.4→0.7 m, medium init
+  C [80 %, 100 %]  speed capped @ 0.25 m/s, offset 0.7→1.2 m, hard init
 
-Key changes vs. v4 original run:
-  • Base checkpoint: v3.1 @ 400K (higher survival than 500K best_model).
+Key changes vs. v4.1:
+  • Base checkpoint: v4.1 @ 150K (best eval: 40% global survival,
+    60% in medium/fast tiers — already saw the moving target).
+  • Crash penalty DISABLED (default 0.0): v4.1 analysis showed it
+    created an incentive to shorten episodes (70% < 100 steps in
+    Phase B/C). Removing it lets the agent learn long-horizon tracking.
+  • Phase A shortened 30% → 20%: the 150K base already knows Phase A.
+  • Phase B extended 75% → 80% of the shorter training: more time
+    consolidating medium-speed tracking.
+  • Timesteps reduced 750K → 400K (starting from a more advanced base).
+  • Output directory: ./models/hover_track_v4_2 (preserves v4.1).
+
+Key changes vs. v4 original:
   • Phase C max speed reduced 0.40 → 0.25 m/s (realistic for physics).
-  • Phase B extended 30–65 → 30–75 % (more mid-speed consolidation).
-  • Crash penalty on early termination, scaled by remaining steps.
-  • Output directory default: ./models/hover_track_v4_1 (preserves v4).
+  • v3.1 stability-gated reward unchanged (validated architecture).
 
 Usage:
     python scripts/train_hover_track_v4.py
     python scripts/train_hover_track_v4.py --timesteps 500000
-    python scripts/train_hover_track_v4.py --max-speed-c 0.30 --phase-c 0.70
+    python scripts/train_hover_track_v4.py --max-speed-c 0.30
 """
 
 import argparse
@@ -77,14 +86,18 @@ from src.utils.episode_recorder import EpisodeRecorder
 def find_best_model():
     """Return path to the best available pre-trained model.
 
-    Preference order:
-      1. v3.1 checkpoint @ 400K steps — evaluation data shows this
-         checkpoint has higher survival (93% global) than the 500K
-         best_model.zip (83% global), with 100/100/80 % across tiers.
-      2. Fallback to v3.1 best_model.zip (typically 500K).
-      3. Fallback to v3 checkpoints.
+    Preference order (v4.2 defaults):
+      1. v4.1 checkpoint @ 150K steps — evaluation data shows this
+         checkpoint has 40% global survival and 60% survival in both
+         medium (0.25 m/s) and fast (0.40 m/s) tiers, already adapted
+         to moving-target tracking.
+      2. v3.1 checkpoint @ 400K — fallback for static-target base
+         (93% global survival, higher than 500K best_model.zip).
+      3. Fallback to v3.1 best_model.zip (typically 500K).
+      4. Fallback to v3 checkpoints.
     """
     candidates = [
+        './models/hover_track_v4_1/checkpoints/model_150000_steps.zip',
         './models/hover_track_v3_1/checkpoints/model_400000_steps.zip',
         './models/hover_track_v3_1/best_model.zip',
         './models/hover_track_v3/checkpoints/model_900000_steps.zip',
@@ -531,16 +544,18 @@ class MovingTargetV4Wrapper(Panda3DQuadrotorEnv):
         return obs, info
 
     def step(self, action):
-        """Step the env, applying a crash penalty on early termination.
+        """Step the env, optionally applying a crash penalty.
 
         The base env runs with enable_collisions=False, so a crash is
         detected as terminated=True before the full episode completes.
-        Penalty is proportional to remaining steps — crashes early in
-        the episode are punished more than late crashes.
+        Penalty (when enabled) is proportional to remaining steps —
+        crashes early in the episode are punished more than late ones.
+
+        Setting crash_penalty_base=0.0 disables the penalty entirely.
         """
         obs, reward, terminated, truncated, info = super().step(action)
 
-        if terminated:
+        if terminated and self.crash_penalty_base > 0.0:
             max_steps = self.base_env.n
             remaining = max(0, max_steps - self._step_counter)
             crash_penalty = -max(
@@ -564,26 +579,29 @@ def parse_args():
         description="Fine-tune hover-track v4 (moving target, lemniscate)")
     p.add_argument('--base-checkpoint', type=str, default=default_ckpt,
                    help=f"Path to pre-trained checkpoint (default: {default_ckpt})")
-    p.add_argument('--timesteps', type=int, default=750_000)
+    p.add_argument('--timesteps', type=int, default=400_000,
+                   help="Total training timesteps (v4.2 default: 400k, "
+                        "starting from v4.1/150k)")
     p.add_argument('--hover-height', type=float, default=1.394)
     p.add_argument('--max-ep-steps', type=int, default=3000,
                    help="Max steps per episode (3000 = 30s)")
     p.add_argument('--lemniscate-scale', type=float, default=2.0,
                    help="Lemniscate half-width in metres (default: 2.0)")
     p.add_argument('--output-dir', type=str,
-                   default='./models/hover_track_v4_1')
+                   default='./models/hover_track_v4_2')
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--no-display', action='store_true')
     p.add_argument('--learning-rate', type=float, default=1e-4)
-    p.add_argument('--phase-b', type=float, default=0.30,
-                   help="Fraction at which Phase B starts (default: 0.30)")
-    p.add_argument('--phase-c', type=float, default=0.75,
-                   help="Fraction at which Phase C starts (default: 0.75)")
+    p.add_argument('--phase-b', type=float, default=0.20,
+                   help="Fraction at which Phase B starts (default: 0.20)")
+    p.add_argument('--phase-c', type=float, default=0.80,
+                   help="Fraction at which Phase C starts (default: 0.80)")
     p.add_argument('--max-speed-c', type=float, default=0.25,
                    help="Max target speed in Phase C in m/s (default: 0.25)")
-    p.add_argument('--crash-penalty-base', type=float, default=10.0,
+    p.add_argument('--crash-penalty-base', type=float, default=0.0,
                    help="Base crash penalty applied on early termination "
-                        "(scaled by remaining steps; default: 10.0)")
+                        "(scaled by remaining steps; default: 0.0 in v4.2 — "
+                        "disabled after v4.1 showed it caused short episodes)")
     p.add_argument('--checkpoint-freq', type=int, default=50_000)
     p.add_argument('--record-interval', type=int, default=25,
                    help="Record one episode every N episodes (0 = disable)")
@@ -688,7 +706,7 @@ class HoverTrackV4App(ShowBase):
         ep_duration = args.max_ep_steps * 0.01
 
         print("\n" + "=" * 70)
-        print("  HOVER-TRACK v4 — SAC FINE-TUNE (moving target, lemniscate)")
+        print("  HOVER-TRACK v4.2 — SAC FINE-TUNE (moving target, lemniscate)")
         print("=" * 70)
         print(f"  Base checkpoint: {base_ckpt}")
         print(f"  Hover height:   {args.hover_height} m")
@@ -771,7 +789,7 @@ class HoverTrackV4App(ShowBase):
             'hover_height': args.hover_height,
             'lemniscate_scale': args.lemniscate_scale,
             'algorithm': 'SAC',
-            'version': 'v4',
+            'version': 'v4.2',
             'fine_tune': True,
             'observation_dim': 19,
             'net_arch': [256, 128],
@@ -793,10 +811,14 @@ class HoverTrackV4App(ShowBase):
                 'Drone repositioned above target at episode start',
                 f'Progressive target speed curriculum '
                 f'(0.05 → {args.max_speed_c})',
-                'Extended Phase B, shortened Phase C '
+                'Phase schedule '
                 f'({args.phase_b:.0%}-{args.phase_c:.0%}-100%)',
-                'Crash penalty on early termination '
-                f'(base={args.crash_penalty_base}, scaled by remaining steps)',
+                (f'Crash penalty DISABLED (base={args.crash_penalty_base}) '
+                 '— v4.2 removes v4.1 penalty that caused short episodes'
+                 if args.crash_penalty_base == 0.0
+                 else f'Crash penalty base={args.crash_penalty_base} '
+                      '(scaled by remaining steps)'),
+                'Base: v4.1/150k checkpoint (best eval: 40% survival)',
                 'v3.1 stability-gated reward unchanged',
                 f'Lemniscate scale: {args.lemniscate_scale}m',
             ],

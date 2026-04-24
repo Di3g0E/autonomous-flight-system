@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 """
-Test: Espiral + Tracking con modelos v3.1 y target móvil.
+Test: Espiral + Tracking con modelos y target móvil.
 
 Prueba la integración completa del pipeline simplificado:
     TRACK → (pierde target N steps) → SEARCH (espiral) → (encuentra target) → TRACK
 
 El target sigue una lemniscata de Bernoulli (∞) mientras el dron
-alterna entre seguimiento visual (SAC v3.1) y búsqueda en espiral.
+alterna entre seguimiento visual (SAC) y búsqueda en espiral.
 
 Puntos críticos probados:
   1. Transición SEARCH→TRACK sin HANDOFF — ¿cuánto tarda en recuperar?
@@ -15,14 +15,14 @@ Puntos críticos probados:
   4. Velocidad del target             — slow/medium/fast
   5. Offset inicial                   — easy/medium/hard
 
-Modelos evaluados por defecto: 150k, 400k, best_model (≈500k)
+Modelos evaluados por defecto de v3.1: 150k, 400k, best_model (≈500k)
 
 Escenarios por defecto:
   slow_easy    — speed=0.10, offset=0.3 m
   medium       — speed=0.22, offset=0.6 m
   fast_hard    — speed=0.35, offset=1.0 m
   recovery     — speed=0.20, offset=2.0 m (dron lejos, empieza en espiral)
-  k_sensitive  — speed=0.20, offset=0.5 m × K=10/30/60
+  k_sensitive  — speed=0.20, offset=0.5 m x K=10/30/60
 
 Usage:
     python tests/test_spiral_track_v3_1.py
@@ -864,7 +864,7 @@ def parse_args():
 
     # Episodios
     p.add_argument('--episodes', type=int, default=5,
-                   help="Episodios por combinación modelo×escenario")
+                   help="Episodios por combinación modeloxescenario")
     p.add_argument('--duration', type=float, default=30.0,
                    help="Duración de cada episodio en segundos")
 
@@ -900,7 +900,7 @@ def main():
     print(f"  Escenarios: {args.scenarios}")
     print(f"  K_invisible:{args.k_invisible}  "
           f"K_variantes:{args.k_values}")
-    print(f"  Episodios:  {args.episodes} × {args.duration}s")
+    print(f"  Episodios:  {args.episodes} x {args.duration}s")
     print(f"  Output:     {args.output_dir}")
     print("=" * 65 + "\n")
 

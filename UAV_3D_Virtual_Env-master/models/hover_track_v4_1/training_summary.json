@@ -1,0 +1,41 @@
+{
+  "total_episodes": 4079,
+  "final_mean_reward": -17.80372072,
+  "final_phase": "C",
+  "csv_path": "models\\hover_track_v4_1\\training_log.csv",
+  "total_timesteps": 750000,
+  "training_time_seconds": 30878.52911901474,
+  "base_checkpoint": "./models/hover_track_v3_1/checkpoints/model_400000_steps.zip",
+  "hover_height": 1.394,
+  "lemniscate_scale": 2.0,
+  "algorithm": "SAC",
+  "version": "v4",
+  "fine_tune": true,
+  "observation_dim": 19,
+  "net_arch": [
+    256,
+    128
+  ],
+  "learning_rate": 0.0001,
+  "max_ep_steps": 3000,
+  "episode_duration_s": 30.0,
+  "reward_version": "v3.1 (unchanged)",
+  "target_mode": "moving (lemniscate)",
+  "curriculum_phases": {
+    "A": "0-30% (slow target, easy init)",
+    "B": "30%-75% (medium target)",
+    "C": "75%-100% (capped @ 0.25 m/s, hard init)"
+  },
+  "max_speed_c": 0.25,
+  "crash_penalty_base": 10.0,
+  "v4_changes": [
+    "Moving target (Bernoulli lemniscate trajectory)",
+    "Drone repositioned above target at episode start",
+    "Progressive target speed curriculum (0.05 \u2192 0.25)",
+    "Extended Phase B, shortened Phase C (30%-75%-100%)",
+    "Crash penalty on early termination (base=10.0, scaled by remaining steps)",
+    "v3.1 stability-gated reward unchanged",
+    "Lemniscate scale: 2.0m"
+  ],
+  "policy_params": 195724
+}

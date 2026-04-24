@@ -3538,3 +3538,288 @@ Señales de alerta durante el training que justificarían parar y revisar:
 
 ---
 
+## [Fecha: 2026-04-19] - Resultados de Entrenamiento v4.1 y Análisis del Training Log
+
+### E10. Entrenamiento Hover Track v4.1 (Completado)
+
+**Configuración ejecutada**:
+- Base checkpoint: `models/hover_track_v3_1/checkpoints/model_400000_steps.zip`
+- Total timesteps: 750,000 (mismo que v4 para comparativa 1:1)
+- Phase schedule: A[0-30%] B[30-75%] C[75-100%]
+- Max speed C: 0.25 m/s (vs 0.40 m/s en v4)
+- Crash penalty: base=10.0, escalado por pasos restantes (`0.02 × remaining`)
+- Output dir: `./models/hover_track_v4_1/` (separado de v4)
+- Record interval: 25 episodios + compile timelapse
+- Algoritmo: SAC (buffer reseteado)
+
+**Resultados globales**:
+- Total episodes: **4,079** (vs 7,171 en v4)
+- Training time: **30,878s ≈ 8.6h** (vs 22h en v4)
+- Final mean reward (rolling 50): **-17.8**
+- Final phase: C
+- Motivo de la mayor velocidad: menos episodios = menos overhead de reset de Panda3D; los episodios de v4.1 al inicio son más largos (agente vuela mejor en Phase A) antes del colapso en B/C.
+
+### Análisis exhaustivo del training log (models/hover_track_v4_1/training_log.csv)
+
+#### Estadísticas por fase
+
+| Phase | Eps | mean R | median R | mean steps | survival% | vis% | r_stab | r_cent |
+|---|---|---|---|---|---|---|---|---|
+| A | 338 | -218.2 | -189.2 | 663 | 3.8% | 30.1% | 0.765 | 0.120 |
+| B | 2,407 | +16.7 | -78.8 | 141 | 0.2% | 37.8% | 0.642 | 0.157 |
+| C | 1,334 | +31.8 | -78.2 | 141 | 0.0% | 36.4% | 0.653 | 0.155 |
+
+Observación: la media de steps colapsa de 663 (Phase A) a 141 (Phase B/C) — pérdida del 79% del horizonte de episodio tras la transición A→B.
+
+#### Evolución temporal por ventanas de 50k steps
+
+| Window | Eps | mean R | mean steps | surv% | vis% | r_stab | Fase |
+|---|---|---|---|---|---|---|---|
+| 0-50k | 165 | -208 | 301 | 0.6% | 24.8% | 0.611 | A |
+| 50-100k | 52 | -169 | 955 | 5.8% | 34.0% | 0.887 | A |
+| **100-150k** | **43** | **-218** | **1,144** | **9.3%** | 31.6% | **0.926** | **A** |
+| 150-200k | 50 | -395 | 1,021 | 6.0% | 34.0% | 0.917 | A |
+| 200-250k | 109 | -55 | 460 | 1.8% | 36.4% | 0.779 | B |
+| 250-300k | 218 | +47 | 229 | 0.0% | 42.8% | 0.685 | B |
+| 300-350k | 269 | +24 | 187 | 0.0% | 37.4% | 0.633 | B |
+| 350-400k | 413 | +43 | 121 | 0.0% | 38.7% | 0.667 | B |
+| 400-450k | 247 | -33 | 203 | 1.6% | 35.0% | 0.701 | B |
+| **450-500k** | **687** | -7 | **73** | 0.0% | 36.9% | **0.600** | **B** |
+| 500-550k | 399 | +36 | 125 | 0.0% | 37.8% | 0.618 | B |
+| 550-600k | 426 | +55 | 117 | 0.0% | 39.1% | 0.609 | C |
+| 600-650k | 473 | +28 | 106 | 0.0% | 34.6% | 0.647 | C |
+| 650-700k | 334 | +43 | 150 | 0.0% | 37.0% | 0.667 | C |
+| 700-750k | 194 | -2 | 259 | 0.0% | 35.7% | 0.723 | C |
+
+El pico de aprendizaje es **100-150k steps** en Phase A (r_stability=0.926, mean_steps=1144). A partir de 225k (transición A→B) se observa el catastrophic forgetting: la estabilidad cae de 0.917 → 0.779 → 0.685 → 0.633 en 150k steps.
+
+#### Distribución de duración de episodios por fase
+
+| Duración | Phase A (n=338) | Phase B (n=2,407) | Phase C (n=1,334) |
+|---|---|---|---|
+| <100 steps | 21.3% | **70.4%** | **71.1%** |
+| 100-500 | 29.6% | 22.1% | 20.0% |
+| 500-1500 | 38.2% | 7.1% | 8.8% |
+| 1500-2700 | 7.1% | 0.3% | 0.1% |
+| ≥2700 (survival) | 3.8% | 0.2% | 0.0% |
+
+El 70% de episodios de Phase B/C duran menos de 100 steps. El replay buffer de SAC queda dominado por transiciones tempranas de episodios fallidos.
+
+#### Mejores episodios aislados por fase
+
+| Phase | Ep # | R | Steps | Vis% | r_stab | target_speed |
+|---|---|---|---|---|---|---|
+| A | 196 | 3,662 | 2,720 | 92% | 0.94 | 0.10 |
+| B | 2,719 | 2,589 | 1,267 | 100% | 0.97 | 0.15 |
+| C | 3,817 | 2,057 | 955 | 100% | 0.97 | 0.21 |
+
+El agente **sí es capaz** de tracking sostenido de target móvil a velocidades hasta 0.21 m/s (Phase C), pero estos outliers no representan la política promedio aprendida.
+
+### Diagnóstico: efecto colateral del crash penalty
+
+El crash penalty creó una competencia entre dos señales en el reward:
+- **Reward por step (positivo)**: ~2-6 puntos con tracking
+- **Crash penalty (negativo)**: -10 a -58 al terminar
+
+Cálculo del equilibrio observado por la política:
+- Episodio 100 steps con tracking mediocre: +50 − 58 = **-8**
+- Episodio 30 steps sin tracking: -30 acumulado − 58 = **-88**
+- Episodio 3,000 steps con tracking perfecto: +6,000 − 0 = **+6,000**
+
+La política converge al primer escenario porque no sabe llegar al tercero. El agente aprende que "episodio corto con algo de tracking" minimiza pérdidas. Esto no era el comportamiento deseado.
+
+### E10-Eval. Evaluación Cuantitativa de Checkpoints v4.1
+
+**Protocolo** (idéntico al E9-Eval de v4 para comparativa 1:1):
+- Duration: 20s (2,000 steps)
+- Episodes per tier: 5
+- Tiers: slow (speed=0.10), medium (speed=0.25), fast (speed=0.40)
+- Checkpoints evaluados: 50k, 150k, 250k, 350k, 500k, 750k + best_model (750001)
+
+**Comando**:
+```bash
+python tests/evaluate_hover_track_v4.py \
+    --model-dir ./models/hover_track_v4_1 \
+    --output-dir ./experiments/hover_track_v4_1 \
+    --episodes-per-tier 5 --duration 20 --no-display
+```
+
+#### Resultados globales v4.1 (todos los checkpoints)
+
+| Checkpoint | Global R | r_stab | vis% | survival% |
+|---|---|---|---|---|
+| 50k | -213.6 | 0.806 | 9.7% | 0% |
+| **150k** | **+189.9** | **0.952** | 15.9% | **40%** |
+| 250k | +51.3 | 0.857 | 44.2% | 0% |
+| 350k | +25.2 | 0.598 | 29.2% | 0% |
+| 500k | +66.6 | 0.608 | 29.1% | 0% |
+| 750k | +228.0 | 0.767 | 45.1% | 0% |
+| 750001 (best_model) | +249.1 | 0.767 | 45.0% | 0% |
+
+**Hallazgo clave**: el mejor checkpoint NO es el `best_model.zip` (750001) sino el **150k**, con 40% survival global — el único checkpoint con survival > 0 en v4.1. El `best_model.zip` de SB3 se guarda en base a `ep_info_buffer` del training, que no refleja bien la capacidad de sobrevivir episodios completos en evaluación.
+
+#### v4 vs v4.1 — comparativa directa al mismo checkpoint
+
+| Ckpt | v4 R | v4 r_stab | v4 vis | v4 surv | v4.1 R | v4.1 r_stab | v4.1 vis | v4.1 surv |
+|---|---|---|---|---|---|---|---|---|
+| 200k (v4) / 150k (v4.1) | -43.6 | 0.928 | 16.5% | 6.7% | +189.9 | 0.952 | 15.9% | 40.0% |
+| 500k | +54.8 | 0.570 | 35.1% | 0% | +66.6 | 0.608 | 29.1% | 0% |
+| 750k | +36.0 | 0.586 | 40.7% | 0% | **+228.0** | **0.767** | 45.1% | 0% |
+
+A checkpoint 750k, v4.1 mejora v4 en todas las métricas:
+- Reward global: +228 vs +36 (**6.3× mejor**)
+- r_stability: 0.767 vs 0.586 (**+0.181 abs**)
+- Visibility: 45.1% vs 40.7%
+
+Sin embargo, ambos comparten **0% survival** en episodios de 20s — problema estructural, no algorítmico.
+
+#### v4.1 por tier — checkpoints relevantes
+
+| Ckpt | Tier | R (mean) | R (std) | vis% | r_stab | r_cent | surv% |
+|---|---|---|---|---|---|---|---|
+| **150k** | slow | +6.3 | ±184 | 10.6% | 0.939 | 0.028 | 0% |
+| **150k** | medium | **+289.5** | ±224 | 17.6% | 0.963 | 0.040 | **60%** |
+| **150k** | fast | +273.9 | ±272 | 19.5% | 0.953 | 0.027 | **60%** |
+| 500k | slow | -3.3 | ±26 | 16.0% | 0.629 | 0.002 | 0% |
+| 500k | medium | +157.6 | ±353 | 19.6% | 0.588 | 0.317 | 0% |
+| 500k | fast | +45.7 | ±110 | 51.6% | 0.608 | 0.057 | 0% |
+| 750k | slow | +213.6 | ±614 | 28.2% | 0.838 | 0.051 | 0% |
+| 750k | medium | **+480.1** | ±518 | 56.9% | **0.947** | 0.332 | 0% |
+| 750k | fast | -9.7 | ±7 | 50.0% | 0.514 | 0.061 | 0% |
+
+Observaciones:
+1. **Checkpoint 150k es el mejor modelo global**: survival 60% en medium y fast tiers. Es el único checkpoint que aún conserva la estabilidad de v3.1 pero ya se ha adaptado al target móvil.
+2. **Checkpoint 750k en medium tier** alcanza R=+480, r_stab=0.947, vis=56.9% — el agente sí aprendió a volar con target móvil a 0.25 m/s, pero no sostiene los 20s completos.
+3. **Tier fast (0.40 m/s)** está fuera de distribución para v4.1 (entrenado con cap 0.25). Resultados son generalización OOD, no medida directa del objetivo.
+
+### Veredicto de v4.1
+
+| Criterio | Objetivo | v4.1 final (750k) | Status |
+|---|---|---|---|
+| Survival global ≥ 20% | 20% | 0% (excepto 150k: 40%) | ⚠️ parcial |
+| Reward global > +500 | +500 | +228 global, +480 en medium | ⚠️ parcial |
+| R_stability final > 0.8 | 0.8 | 0.767 | ⚠️ casi |
+| Sin catastrophic forgetting | — | parcial (0.952→0.598→0.767) | ❌ |
+
+v4.1 **mejora todas las métricas frente a v4** pero no alcanza los objetivos porque el crash penalty introdujo un incentivo a episodios cortos que compitió con el objetivo de tracking sostenido. El diagnóstico del training (catastrophic forgetting en transición A→B) y de la evaluación (survival 0% pese a reward positivo) convergen en la misma hipótesis: **la penalización por crash fue contraproducente**.
+
+### Archivos Generados
+
+**Entrenamiento**:
+- `models/hover_track_v4_1/best_model.zip` — checkpoint final SAC (750001 steps)
+- `models/hover_track_v4_1/training_log.csv` — 4,079 episodios × 20 métricas
+- `models/hover_track_v4_1/training_summary.json`
+- `models/hover_track_v4_1/checkpoints/` — 15 checkpoints (50k → 750k)
+- `models/hover_track_v4_1/recordings/` — episodios grabados + timelapse
+
+**Evaluación**:
+- `experiments/hover_track_v4_1/checkpoint_comparison.json`
+- `experiments/hover_track_v4_1/checkpoint_episodes.csv`
+- `experiments/hover_track_v4_1/checkpoint_global.png`
+- `experiments/hover_track_v4_1/checkpoint_tiers.png`
+
+### Aprendizajes consolidados
+
+1. **El crash penalty no debe ser una variable independiente en esta arquitectura**. Con `enable_collisions=False`, usar la duración del episodio como proxy inverso de crash introdujo un atajo contraproducente para la política.
+
+2. **El `best_model.zip` de SB3 puede no ser el mejor checkpoint real**. El criterio interno de SB3 (rolling reward del training) no correlaciona bien con survival en evaluación. **Siempre evaluar todos los checkpoints**, no confiar en `best_model.zip`.
+
+3. **v3.1/400k como base de transfer learning está validado**: v4.1 en Phase A pura (100-150k steps) alcanzó r_stability=0.926 y mean_steps=1144 — el modelo puede seguir target móvil lento. El problema está en el curriculum posterior.
+
+4. **La transición entre fases del curriculum es el punto crítico, no la fase final**. Reducir el salto de dificultad entre Phase A y Phase B (e.g. solapando rangos de velocidad) puede evitar el catastrophic forgetting.
+
+5. **Cap de velocidad a 0.25 m/s fue correcto**: el modelo sí aprendió a seguir targets a esa velocidad (r_stab=0.947 en medium tier del 750k). El problema no es el techo, es el comportamiento al terminar episodios.
+
+### Recomendaciones para v4.2
+
+Basándose en el diagnóstico:
+
+| Problema identificado | Solución propuesta |
+|---|---|
+| Crash penalty causa episodios cortos | **Eliminar** crash penalty (`--crash-penalty-base 0.0`) |
+| `best_model.zip` es mediocre | Partir del checkpoint **150k de v4.1** (40% survival demostrado) |
+| Catastrophic forgetting en A→B | Phase B más corta ya que el 150k ya vio medio-bajo |
+| Phase C con speed 0.25 funcionó | Mantener cap 0.25 m/s |
+| Training completo innecesario | Reducir a **400k steps** (partimos más avanzado) |
+
+**Comando propuesto para v4.2**:
+```bash
+python scripts/train_hover_track_v4.py \
+    --base-checkpoint ./models/hover_track_v4_1/checkpoints/model_150000_steps.zip \
+    --timesteps 400000 \
+    --phase-b 0.20 --phase-c 0.80 \
+    --max-speed-c 0.25 \
+    --crash-penalty-base 0.0 \
+    --output-dir ./models/hover_track_v4_2
+```
+
+### Siguientes Pasos
+
+1. **Evaluación fina del entorno del 150k** (100k, 125k, 150k, 175k, 200k) con `episodes-per-tier=10` y `duration=30` para localizar con precisión el pico y decidir el checkpoint óptimo como base de v4.2.
+2. **Diseñar e implementar v4.2** según las recomendaciones anteriores.
+3. **Decidir sobre el tier fast (0.40 m/s)** de la evaluación: o mantener como medida de generalización OOD o añadir un nuevo tier `very_fast=0.30` para evaluar justo por encima del cap del training.
+4. **Considerar EvalCallback custom**: el `best_model.zip` de SB3 se guarda con el criterio interno; añadir un `EvalCallback` que use el protocolo de evaluación real (tiers + survival) daría un `best_model.zip` significativamente mejor.
+
+---
+
+
+---
+
+## [Fecha: 2026-04-24] - Resultados de Evaluación Hover Track v4.2
+
+### Motivación
+Analizar los resultados de la iteración `v4_2`, diseñada para corregir los defectos de `v4.1` (principalmente el incentivo perverso introducido por el *crash penalty*). El objetivo era lograr un seguimiento robusto del objetivo en movimiento maximizando tanto la visibilidad como la tasa de supervivencia.
+
+### E11-Eval. Evaluación Cuantitativa de Checkpoints v4.2
+
+**Protocolo de evaluación:**
+- Directorio de resultados: `experiments/hover_track_v4_2/`
+- Checkpoints evaluados: 50k, 150k, 250k, 350k, 400k, 400k+1 (best_model)
+- Episodios por tier: 5
+- Duración: 20s (2,000 steps)
+- Tiers evaluados: *Slow* (0.1 m/s), *Medium* (0.25 m/s) y *Fast* (0.4 m/s).
+
+#### Resultados Globales por Checkpoint
+
+| Checkpoint | Reward (Media) | Visibilidad (%) | Supervivencia (%) | Acción (Mag) | Estabilidad (r_stab) |
+|---|---|---|---|---|---|
+| 50k | 31.23 | 18.98% | 6.7% | 0.163 | 0.935 |
+| 150k | 87.84 | 19.74% | **26.7%** | 0.206 | **0.943** |
+| 250k | 168.32 | 31.40% | 0.0% | 0.167 | 0.941 |
+| **350k** | **351.62** | **54.30%** | 0.0% | 0.310 | 0.850 |
+| 400k | 27.57 | 34.78% | 0.0% | 0.695 | 0.512 |
+
+#### Rendimiento por Tiers en el Checkpoint Óptimo (350k)
+
+| Tier | Reward (Media) | Visibilidad (%) | Supervivencia (%) |
+|---|---|---|---|
+| Slow | 195.02 | 27.8% | 0.0% |
+| **Medium** | **556.41** | **72.9%** | 0.0% |
+| Fast | 303.43 | 62.1% | 0.0% |
+
+### Análisis del Comportamiento y Evolución
+
+1. **Fase Inicial (Conservadora): 50k - 150k steps**
+   - El agente prefiere la estabilidad de vuelo sobre el seguimiento.
+   - Alcanza la mayor tasa de supervivencia global (26.7% a los 150k), junto con una excelente recompensa de estabilidad (`mean_r_stability` = 0.943).
+   - Sin embargo, las recompensas de tracking son bajas, y apenas logra mantener al objetivo a la vista (visibilidad ~19%). Las magnitudes de acción son conservadoras (~0.16 - 0.20).
+
+2. **Pico de Rendimiento de Seguimiento: 350k steps**
+   - El agente aprende a ser más agresivo para seguir al objetivo, incrementando la magnitud de sus acciones (0.31).
+   - **Es el mejor modelo para tracking puro**: Logra la mayor recompensa media global (351.6) y el pico histórico de visibilidad (54.3% global).
+   - **Rendimiento excepcional en Medium**: Se adapta perfectamente a la dinámica de velocidad media (0.25 m/s), logrando un **72.9% de visibilidad** y 556 puntos de recompensa.
+   - **Trade-off de supervivencia**: El dron sacrifica su estabilidad y seguridad para no perder el enfoque de la cámara, provocando que la tasa de supervivencia caiga al 0% (todos los episodios terminan antes del límite de tiempo por salidas del área o choques). Curiosamente, le cuesta más el nivel *Slow* que los demás, lo que sugiere un sobreajuste a dinámicas más rápidas.
+
+3. **Colapso de la Política (Catastrophic Forgetting): 400k steps**
+   - A partir del checkpoint 400k, el modelo sufre un colapso completo.
+   - La recompensa global cae dramáticamente a 27.57.
+   - Las acciones se vuelven erráticas, violentas y extremas (la magnitud de acción salta a ~0.70).
+   - La recompensa de estabilidad se desploma a 0.51. En la práctica, casi todos los episodios en este checkpoint terminan en menos de 30 steps debido a la pérdida inmediata de control tras el despegue.
+
+### Conclusiones y Próximos Pasos (TFG)
+
+1. **Selección del Modelo**: El **checkpoint 350.000** debe ser utilizado si se requiere desplegar el modelo o grabar demostraciones, ya que es la única iteración que ha consolidado exitosamente el comportamiento de "tracking" (especialmente en velocidades medias).
+2. **Early Stopping**: El entrenamiento debió detenerse en los 350k steps. Los últimos 50k steps destruyeron la red neuronal generando inestabilidades críticas.
+3. **Reward Shaping (Ajustes Futuros)**: El comportamiento en el punto óptimo (350k) revela que el agente prioriza centrar la cámara por encima de no estrellarse (0% supervivencia). Para futuras versiones, se recomienda:
+   - Aumentar el peso de la recompensa de estabilidad (`r_stability`).
+   - Aumentar severamente la penalización por comandos bruscos (`action_jerk`) para evitar movimientos erráticos y prevenir caídas.
