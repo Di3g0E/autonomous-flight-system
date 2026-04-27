@@ -16,11 +16,17 @@ No BRAKE or HANDOFF states:  the hard curriculum tier (high velocity,
 large offset) trains the agent to recover from post-spiral conditions
 directly.
 
-Curriculum (3 phases, re-tuned v4.2 defaults)
----------------------------------------------
-  A [0 %, 20 %)    speed 0.05→0.15, offset 0.2→0.4 m, easy init
-  B [20 %, 80 %)   speed 0.15→0.25, offset 0.4→0.7 m, medium init
-  C [80 %, 100 %]  speed capped @ 0.25 m/s, offset 0.7→1.2 m, hard init
+Curriculum (3 phases, FOV-area-based offset — v6)
+-------------------------------------------------
+  A [0 %, 20 %)    speed 0.05→0.15, target in 0–10 % FOV area (center)
+  B [20 %, 65 %)   speed 0.15→0.25, target in 10–75 % FOV area (mid-ring)
+  C [65 %, 100 %]  speed capped @ 0.25 m/s, target in 75–100+% FOV
+                    (periphery + partially outside, still visible)
+
+v6 reward adjustments (additive, on top of v3.1 base):
+  • Stability bonus:  +w_stab × r_stability   (default w_stab=2.0)
+  • Extra jerk pen.:  -w_jerk × ||Δaction||²   (default w_jerk=1.2)
+  • Altitude penalty:  -w_alt × |Δz|/h_hover   (default w_alt=1.0)
 
 Key changes vs. v4.1:
   • Base checkpoint: v4.1 @ 150K (best eval: 40% global survival,
@@ -277,7 +283,10 @@ class CurriculumV4Callback(BaseCallback):
         # Start in Phase A
         self.current_phase = 'A'
         self.cur_speed_range = (0.05, 0.15)
-        self.target_offset_range = 0.2
+        # FOV geometry: r_max = hover_height × (half_film_h / focal_length)
+        self.fov_radius = raw_env.hover_height * 12.0 / 45.0
+        self.target_sphere_radius = raw_env.target_radius  # 0.25m
+        self.target_offset_range = (0.0, np.sqrt(0.10) * self.fov_radius)
         self.cur_pos_range = 0.2
         self.cur_vel_range = 0.10
         self.cur_ang_range = 0.03
@@ -321,7 +330,8 @@ class CurriculumV4Callback(BaseCallback):
             speed_lo = 0.05 + p * 0.05              # 0.05 → 0.10
             speed_hi = 0.10 + p * 0.05              # 0.10 → 0.15
             self.cur_speed_range = (speed_lo, speed_hi)
-            self.target_offset_range = 0.2 + p * 0.2   # 0.2 → 0.4 m
+            # Phase A: target in 0–10% FOV area (centered)
+            self.target_offset_range = (0.0, np.sqrt(0.10) * self.fov_radius)
             self.cur_pos_range = 0.2 + p * 0.1         # 0.2 → 0.3 m
             self.cur_vel_range = 0.10 + p * 0.05        # 0.10 → 0.15
             self.cur_ang_range = 0.03 + p * 0.02        # 0.03 → 0.05
@@ -333,7 +343,9 @@ class CurriculumV4Callback(BaseCallback):
             speed_lo = 0.10 + p * 0.05              # 0.10 → 0.15
             speed_hi = 0.15 + p * 0.10              # 0.15 → 0.25
             self.cur_speed_range = (speed_lo, speed_hi)
-            self.target_offset_range = 0.4 + p * 0.3   # 0.4 → 0.7 m
+            # Phase B: target in 10–75% FOV area (mid-ring)
+            self.target_offset_range = (np.sqrt(0.10) * self.fov_radius,
+                                        np.sqrt(0.75) * self.fov_radius)
             self.cur_pos_range = 0.3 + p * 0.2         # 0.3 → 0.5 m
             self.cur_vel_range = 0.15 + p * 0.15        # 0.15 → 0.30
             self.cur_ang_range = 0.05 + p * 0.05        # 0.05 → 0.10
@@ -349,7 +361,12 @@ class CurriculumV4Callback(BaseCallback):
             speed_lo = 0.15 + p * (max_lo - 0.15)     # 0.15 → max_lo
             speed_hi = 0.25 + p * (max_hi - 0.25)     # 0.25 → max_hi
             self.cur_speed_range = (speed_lo, speed_hi)
-            self.target_offset_range = 0.7 + p * 0.5   # 0.7 → 1.2 m
+            # Phase C: target at periphery + partially outside FOV
+            # Max offset = fov_radius + target_sphere_radius
+            # so the sphere is still partially visible at the edge
+            r_max_c = self.fov_radius + self.target_sphere_radius
+            self.target_offset_range = (np.sqrt(0.75) * self.fov_radius,
+                                        r_max_c)
             self.cur_pos_range = 0.5 + p * 0.3         # 0.5 → 0.8 m
             self.cur_vel_range = 0.30 + p * 0.30        # 0.30 → 0.60
             self.cur_ang_range = 0.10 + p * 0.05        # 0.10 → 0.15
@@ -364,7 +381,7 @@ class CurriculumV4Callback(BaseCallback):
         if self.current_phase != prev_phase:
             print(f"\n  Phase {prev_phase} -> {self.current_phase}  "
                   f"(speed={self.cur_speed_range}  "
-                  f"off={self.target_offset_range:.2f}m  "
+                  f"off={self.target_offset_range[0]:.3f}-{self.target_offset_range[1]:.3f}m  "
                   f"vel={self.cur_vel_range:.2f})")
 
         if hasattr(self.model, 'ep_info_buffer'):
@@ -439,7 +456,7 @@ class CurriculumV4Callback(BaseCallback):
             _m(self._ep_r_smooth),
             self.current_phase,
             round(self.raw_env.target_speed, 4),
-            round(self.target_offset_range, 3),
+            f"{self.target_offset_range[0]:.3f}-{self.target_offset_range[1]:.3f}",
             round(self.cur_pos_range, 3),
             round(self.cur_vel_range, 3),
             round(self.cur_ang_range, 3),
@@ -459,7 +476,7 @@ class CurriculumV4Callback(BaseCallback):
               f"Ep={self.episode_count} | R={mean_r:7.2f} | "
               f"Phase={self.current_phase} "
               f"spd={self.cur_speed_range[1]:.2f} "
-              f"off={self.target_offset_range:.2f}m | "
+              f"off={self.target_offset_range[0]:.3f}-{self.target_offset_range[1]:.3f}m | "
               f"{fps:.0f} fps")
 
     def save_metrics(self, extras=None):
@@ -493,12 +510,22 @@ class MovingTargetV4Wrapper(Panda3DQuadrotorEnv):
       3. Target speed is sampled from curriculum-controlled range.
     """
 
-    def __init__(self, *args, crash_penalty_base=10.0, **kwargs):
+    def __init__(self, *args, crash_penalty_base=10.0,
+                 w_stability_bonus=0.0, w_extra_jerk=0.0,
+                 w_altitude=0.0, **kwargs):
         super().__init__(*args, **kwargs)
         self.min_start_distance = 0.0   # allow any lemniscate phase
-        self.target_offset_range = 0.3  # initial XY offset from target
+        # FOV geometry: r_max = hover_height × (half_film_h / focal_length)
+        self.fov_radius_max = self.hover_height * 12.0 / 45.0
+        self.target_offset_range = (0.0, np.sqrt(0.10) * self.fov_radius_max)
         self.target_speed_range = (0.05, 0.15)  # set by curriculum
         self.crash_penalty_base = crash_penalty_base
+
+        # ── v6 reward adjustments ──
+        self.w_stability_bonus = w_stability_bonus
+        self.w_extra_jerk = w_extra_jerk
+        self.w_altitude = w_altitude
+        self._prev_action_v6 = None
 
     def reset(self, seed=None, options=None):
         # Sample target speed for this episode
@@ -507,12 +534,15 @@ class MovingTargetV4Wrapper(Panda3DQuadrotorEnv):
         obs, info = super().reset(seed=seed, options=options)
 
         # ── Reposition drone above the target ──
-        off = self.target_offset_range
-        if off > 0.01 or True:  # always reposition for moving target
+        off_min, off_max = self.target_offset_range
+        if True:  # always reposition for moving target
             state = self.base_env.state.copy()
 
-            dx = (np.random.rand() - 0.5) * 2 * off
-            dy = (np.random.rand() - 0.5) * 2 * off
+            # Polar sampling: uniform in annular area [off_min, off_max]
+            r = np.sqrt(np.random.uniform(off_min**2, off_max**2))
+            theta = np.random.uniform(0, 2 * np.pi)
+            dx = r * np.cos(theta)
+            dy = r * np.sin(theta)
 
             # Place drone above target + offset
             state[0] = self.target_pos[0] + dx     # x
@@ -528,7 +558,9 @@ class MovingTargetV4Wrapper(Panda3DQuadrotorEnv):
             # Keep quaternion [6:10] and angular vel [10:13] from
             # constrained_init (already near-hover)
 
-            self.base_env.state = state
+            # Apply state directly to the underlying physics engine
+            self.base_env.state = state.copy()
+            self.base_env.previous_state = state.copy()
 
             # Sync 3D model to new position
             self._update_visualization()
@@ -544,17 +576,44 @@ class MovingTargetV4Wrapper(Panda3DQuadrotorEnv):
         return obs, info
 
     def step(self, action):
-        """Step the env, optionally applying a crash penalty.
+        """Step the env with v6 reward adjustments.
 
-        The base env runs with enable_collisions=False, so a crash is
-        detected as terminated=True before the full episode completes.
-        Penalty (when enabled) is proportional to remaining steps —
-        crashes early in the episode are punished more than late ones.
+        On top of the v3.1 base reward, v6 adds three components:
+          1. Stability bonus:   +w_stab × r_stability
+          2. Extra jerk penalty: -w_jerk × ||Δaction||²
+          3. Altitude penalty:   -w_alt  × |Δz| / hover_height
 
-        Setting crash_penalty_base=0.0 disables the penalty entirely.
+        The crash penalty (if enabled) is applied last.
         """
         obs, reward, terminated, truncated, info = super().step(action)
 
+        # ── v6 reward adjustments ─────────────────────────────────────
+        r_stab = info.get('r_stability', 0.0)
+
+        # 1. Additive stability bonus — rewards smooth, level flight
+        stab_bonus = self.w_stability_bonus * r_stab
+
+        # 2. Extra jerk penalty — penalises violent action changes
+        extra_jerk = 0.0
+        if self._prev_action_v6 is not None:
+            delta = float(np.linalg.norm(
+                np.asarray(action) - self._prev_action_v6))
+            extra_jerk = -self.w_extra_jerk * delta ** 2
+        self._prev_action_v6 = np.asarray(action, dtype=np.float32).copy()
+
+        # 3. Altitude deviation penalty — keeps drone at hover height
+        drone_z = self.base_env.state[4]
+        ideal_z = self.target_pos[2] + self.hover_height
+        alt_error = abs(drone_z - ideal_z) / self.hover_height
+        alt_penalty = -self.w_altitude * alt_error
+
+        reward += stab_bonus + extra_jerk + alt_penalty
+
+        info['v6_stability_bonus'] = float(stab_bonus)
+        info['v6_extra_jerk'] = float(extra_jerk)
+        info['v6_alt_penalty'] = float(alt_penalty)
+
+        # ── Crash penalty (legacy, disabled by default in v4.2+) ──
         if terminated and self.crash_penalty_base > 0.0:
             max_steps = self.base_env.n
             remaining = max(0, max_steps - self._step_counter)
@@ -588,13 +647,13 @@ def parse_args():
     p.add_argument('--lemniscate-scale', type=float, default=2.0,
                    help="Lemniscate half-width in metres (default: 2.0)")
     p.add_argument('--output-dir', type=str,
-                   default='./models/hover_track_v4_2')
+                   default='./models/hover_track_v6')
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--no-display', action='store_true')
     p.add_argument('--learning-rate', type=float, default=1e-4)
     p.add_argument('--phase-b', type=float, default=0.20,
                    help="Fraction at which Phase B starts (default: 0.20)")
-    p.add_argument('--phase-c', type=float, default=0.80,
+    p.add_argument('--phase-c', type=float, default=0.65,
                    help="Fraction at which Phase C starts (default: 0.80)")
     p.add_argument('--max-speed-c', type=float, default=0.25,
                    help="Max target speed in Phase C in m/s (default: 0.25)")
@@ -602,6 +661,19 @@ def parse_args():
                    help="Base crash penalty applied on early termination "
                         "(scaled by remaining steps; default: 0.0 in v4.2 — "
                         "disabled after v4.1 showed it caused short episodes)")
+
+    # ── v6 reward adjustments ──
+    p.add_argument('--w-stability-bonus', type=float, default=2.0,
+                   help="Additive stability bonus weight (v6: 2.0). "
+                        "Rewards smooth, level flight independently of tracking.")
+    p.add_argument('--w-extra-jerk', type=float, default=1.2,
+                   help="Extra jerk penalty weight (v6: 1.2). "
+                        "Added on top of base r_smooth=-0.3. "
+                        "Total jerk cost = -(0.3 + 1.2) × delta².")
+    p.add_argument('--w-altitude', type=float, default=1.0,
+                   help="Altitude deviation penalty weight (v6: 1.0). "
+                        "Penalises drift from hover_height above target.")
+
     p.add_argument('--checkpoint-freq', type=int, default=50_000)
     p.add_argument('--record-interval', type=int, default=25,
                    help="Record one episode every N episodes (0 = disable)")
@@ -676,6 +748,9 @@ class HoverTrackV4App(ShowBase):
             init_ang_range=0.03,
             reward_version='v3.1',
             crash_penalty_base=args.crash_penalty_base,
+            w_stability_bonus=args.w_stability_bonus,
+            w_extra_jerk=args.w_extra_jerk,
+            w_altitude=args.w_altitude,
         )
 
         self.env = Monitor(self.raw_env)
@@ -706,7 +781,7 @@ class HoverTrackV4App(ShowBase):
         ep_duration = args.max_ep_steps * 0.01
 
         print("\n" + "=" * 70)
-        print("  HOVER-TRACK v4.2 — SAC FINE-TUNE (moving target, lemniscate)")
+        print("  HOVER-TRACK v6 — SAC FINE-TUNE (stability-aware tracking)")
         print("=" * 70)
         print(f"  Base checkpoint: {base_ckpt}")
         print(f"  Hover height:   {args.hover_height} m")
@@ -715,7 +790,11 @@ class HoverTrackV4App(ShowBase):
         print(f"  Observation:    19-D flat (13 state + 6 centroid)")
         print(f"  Policy:         MlpPolicy [256, 128]  (preserved)")
         print(f"  Algorithm:      SAC (auto entropy)")
-        print(f"  Reward:         v3.1 (stability-gated, unchanged)")
+        print(f"  Reward:         v3.1 base + v6 adjustments")
+        print(f"    ├─ Stability bonus:  w={args.w_stability_bonus}")
+        print(f"    ├─ Extra jerk pen.:  w={args.w_extra_jerk} "
+              f"(total jerk = -{0.3 + args.w_extra_jerk:.1f}×Δ²)")
+        print(f"    └─ Altitude penalty: w={args.w_altitude}")
         print(f"  Learning rate:  {args.learning_rate}")
         print(f"  Timesteps:      {args.timesteps:,}")
         print(f"  Episode steps:  {args.max_ep_steps} ({ep_duration:.0f}s)")
@@ -724,8 +803,7 @@ class HoverTrackV4App(ShowBase):
               f"B[{args.phase_b:.0%}-{args.phase_c:.0%}] "
               f"C[{args.phase_c:.0%}-100%]")
         print(f"  Max speed C:    {args.max_speed_c} m/s")
-        print(f"  Crash penalty:  base={args.crash_penalty_base} "
-              f"(scaled by remaining steps)")
+        print(f"  Crash penalty:  base={args.crash_penalty_base}")
         print(f"  Buffer:         EMPTY (fresh start)")
         print(f"  Output:         {args.output_dir}")
         print("=" * 70)

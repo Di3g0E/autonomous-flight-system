@@ -378,16 +378,17 @@ class Panda3DQuadrotorEnv(gym.Env):
                 if dist >= self.min_start_distance:
                     break
 
-            # Height: below drone when camera_down, ground level otherwise
-            target_z = drone_pos[2] - self.hover_height if self.camera_down else 0.0
+            # Height: Fixed at ground level (z=0) for consistency.
+            # Repositioning of the drone relative to the target is handled in reset().
+            target_z = 0.0
             self.target_pos = np.array([x, y, target_z])
 
         elif self.camera_down:
-            # Target directly below drone at hover_height distance
+            # Target directly below drone at ground level (z=0)
             self.target_pos = np.array([
                 drone_pos[0],
                 drone_pos[1],
-                drone_pos[2] - self.hover_height,
+                0.0,
             ])
             self.target_pos = np.clip(self.target_pos, -3.0, 3.0)
 
@@ -475,8 +476,8 @@ class Panda3DQuadrotorEnv(gym.Env):
             x, y = self._lemniscate_point(t)
             self.target_pos[0] = x
             self.target_pos[1] = y
-            if self.camera_down:
-                self.target_pos[2] = drone_pos[2] - self.hover_height
+            # Z stays at the constant altitude set during reset
+            # (no longer follows drone height dynamically)
 
             if not self.filming_mode:
                 self.base_env.set_target(self.target_pos)

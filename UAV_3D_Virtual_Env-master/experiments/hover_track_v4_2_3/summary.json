@@ -1,0 +1,61 @@
+{
+  "config": {
+    "hover_height": 1.394,
+    "target_mode": "fixed",
+    "target_speed": 0.0,
+    "max_steps": 2000,
+    "model": "./models/hover_track_v4_2/checkpoints/model_350000_steps.zip",
+    "spiral": "./models/spiral_follow/best_model.zip"
+  },
+  "mean_reward": 4355.0,
+  "mean_steps": 1811.6,
+  "mean_centering_dist": 0.546,
+  "mean_action_mag": 0.2,
+  "episodes": [
+    {
+      "episode": 1,
+      "steps": 2000,
+      "end_reason": "truncated",
+      "total_reward": 4447.0,
+      "mean_centering_dist": 0.556,
+      "mean_action_mag": 0.214,
+      "visibility_pct": 96.0
+    },
+    {
+      "episode": 2,
+      "steps": 1058,
+      "end_reason": "out_of_bounds",
+      "total_reward": 2214.9,
+      "mean_centering_dist": 0.678,
+      "mean_action_mag": 0.162,
+      "visibility_pct": 97.1
+    },
+    {
+      "episode": 3,
+      "steps": 2000,
+      "end_reason": "truncated",
+      "total_reward": 5099.8,
+      "mean_centering_dist": 0.361,
+      "mean_action_mag": 0.387,
+      "visibility_pct": 99.2
+    },
+    {
+      "episode": 4,
+      "steps": 2000,
+      "end_reason": "truncated",
+      "total_reward": 5176.3,
+      "mean_centering_dist": 0.542,
+      "mean_action_mag": 0.11,
+      "visibility_pct": 99.5
+    },
+    {
+      "episode": 5,
+      "steps": 2000,
+      "end_reason": "truncated",
+      "total_reward": 4836.8,
+      "mean_centering_dist": 0.593,
+      "mean_action_mag": 0.127,
+      "visibility_pct": 99.8
+    }
+  ]
+}

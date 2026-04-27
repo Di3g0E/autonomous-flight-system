@@ -1,0 +1,1229 @@
+{
+  "duration_s": 20,
+  "episodes_per_tier": 5,
+  "reward_version": "v3.1",
+  "target_mode": "moving (lemniscate)",
+  "lemniscate_scale": 2.0,
+  "tiers": {
+    "slow": {
+      "speed": 0.1,
+      "offset": 0.3,
+      "vel": 0.1,
+      "ang": 0.05
+    },
+    "medium": {
+      "speed": 0.25,
+      "offset": 0.6,
+      "vel": 0.25,
+      "ang": 0.1
+    },
+    "fast": {
+      "speed": 0.4,
+      "offset": 1.0,
+      "vel": 0.4,
+      "ang": 0.15
+    }
+  },
+  "checkpoints": {
+    "50000": {
+      "global": {
+        "total_reward": {
+          "mean": 31.2327,
+          "std": 254.6016
+        },
+        "visibility_pct": {
+          "mean": 18.98,
+          "std": 28.7126
+        },
+        "mean_centering_dist": {
+          "mean": 0.5825,
+          "std": 0.481
+        },
+        "mean_fraction": {
+          "mean": 0.0501,
+          "std": 0.0517
+        },
+        "mean_action_mag": {
+          "mean": 0.1637,
+          "std": 0.0979
+        },
+        "mean_action_jerk": {
+          "mean": 0.0317,
+          "std": 0.0205
+        },
+        "mean_r_stability": {
+          "mean": 0.9356,
+          "std": 0.087
+        },
+        "mean_r_centering": {
+          "mean": 0.0192,
+          "std": 0.0376
+        },
+        "mean_r_scale": {
+          "mean": 0.07,
+          "std": 0.0974
+        },
+        "mean_r_vel_damp": {
+          "mean": 0.2745,
+          "std": 0.1279
+        },
+        "mean_r_smooth": {
+          "mean": -0.0145,
+          "std": 0.0124
+        },
+        "episodes": 15,
+        "early_terminations": 14,
+        "survival_rate_pct": 6.7
+      },
+      "tiers": {
+        "slow": {
+          "total_reward": {
+            "mean": -79.844,
+            "std": 48.2105
+          },
+          "visibility_pct": {
+            "mean": 1.84,
+            "std": 3.68
+          },
+          "mean_centering_dist": {
+            "mean": 0.1933,
+            "std": 0.3866
+          },
+          "mean_fraction": {
+            "mean": 0.0102,
+            "std": 0.0203
+          },
+          "mean_action_mag": {
+            "mean": 0.1141,
+            "std": 0.0339
+          },
+          "mean_action_jerk": {
+            "mean": 0.0174,
+            "std": 0.0078
+          },
+          "mean_r_stability": {
+            "mean": 0.9769,
+            "std": 0.0138
+          },
+          "mean_r_centering": {
+            "mean": 0.0005,
+            "std": 0.0009
+          },
+          "mean_r_scale": {
+            "mean": 0.0048,
+            "std": 0.0096
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.3785,
+            "std": 0.1201
+          },
+          "mean_r_smooth": {
+            "mean": -0.0066,
+            "std": 0.0043
+          },
+          "episodes": 5,
+          "early_terminations": 4,
+          "survival_rate_pct": 20.0
+        },
+        "medium": {
+          "total_reward": {
+            "mean": 277.41,
+            "std": 307.7313
+          },
+          "visibility_pct": {
+            "mean": 31.1,
+            "std": 26.0186
+          },
+          "mean_centering_dist": {
+            "mean": 0.7143,
+            "std": 0.3619
+          },
+          "mean_fraction": {
+            "mean": 0.0936,
+            "std": 0.0528
+          },
+          "mean_action_mag": {
+            "mean": 0.1761,
+            "std": 0.059
+          },
+          "mean_action_jerk": {
+            "mean": 0.0381,
+            "std": 0.0184
+          },
+          "mean_r_stability": {
+            "mean": 0.9229,
+            "std": 0.0786
+          },
+          "mean_r_centering": {
+            "mean": 0.05,
+            "std": 0.0514
+          },
+          "mean_r_scale": {
+            "mean": 0.1468,
+            "std": 0.1022
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.2673,
+            "std": 0.1057
+          },
+          "mean_r_smooth": {
+            "mean": -0.0151,
+            "std": 0.0066
+          },
+          "episodes": 5,
+          "early_terminations": 5,
+          "survival_rate_pct": 0.0
+        },
+        "fast": {
+          "total_reward": {
+            "mean": -103.868,
+            "std": 79.0551
+          },
+          "visibility_pct": {
+            "mean": 24.0,
+            "std": 36.2884
+          },
+          "mean_centering_dist": {
+            "mean": 0.84,
+            "std": 0.4224
+          },
+          "mean_fraction": {
+            "mean": 0.0465,
+            "std": 0.0363
+          },
+          "mean_action_mag": {
+            "mean": 0.2009,
+            "std": 0.1419
+          },
+          "mean_action_jerk": {
+            "mean": 0.0396,
+            "std": 0.0235
+          },
+          "mean_r_stability": {
+            "mean": 0.9071,
+            "std": 0.1169
+          },
+          "mean_r_centering": {
+            "mean": 0.0072,
+            "std": 0.0127
+          },
+          "mean_r_scale": {
+            "mean": 0.0585,
+            "std": 0.0876
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.1777,
+            "std": 0.0571
+          },
+          "mean_r_smooth": {
+            "mean": -0.0218,
+            "std": 0.0167
+          },
+          "episodes": 5,
+          "early_terminations": 5,
+          "survival_rate_pct": 0.0
+        }
+      }
+    },
+    "150000": {
+      "global": {
+        "total_reward": {
+          "mean": 87.84,
+          "std": 215.5218
+        },
+        "visibility_pct": {
+          "mean": 19.7467,
+          "std": 12.3626
+        },
+        "mean_centering_dist": {
+          "mean": 0.8365,
+          "std": 0.2486
+        },
+        "mean_fraction": {
+          "mean": 0.0988,
+          "std": 0.0413
+        },
+        "mean_action_mag": {
+          "mean": 0.2066,
+          "std": 0.0627
+        },
+        "mean_action_jerk": {
+          "mean": 0.1363,
+          "std": 0.0749
+        },
+        "mean_r_stability": {
+          "mean": 0.9435,
+          "std": 0.0358
+        },
+        "mean_r_centering": {
+          "mean": 0.0435,
+          "std": 0.0378
+        },
+        "mean_r_scale": {
+          "mean": 0.1039,
+          "std": 0.0802
+        },
+        "mean_r_vel_damp": {
+          "mean": 0.4013,
+          "std": 0.0487
+        },
+        "mean_r_smooth": {
+          "mean": -0.1093,
+          "std": 0.0744
+        },
+        "episodes": 15,
+        "early_terminations": 11,
+        "survival_rate_pct": 26.7
+      },
+      "tiers": {
+        "slow": {
+          "total_reward": {
+            "mean": -7.18,
+            "std": 239.0146
+          },
+          "visibility_pct": {
+            "mean": 11.68,
+            "std": 10.7259
+          },
+          "mean_centering_dist": {
+            "mean": 0.7454,
+            "std": 0.4067
+          },
+          "mean_fraction": {
+            "mean": 0.0789,
+            "std": 0.0576
+          },
+          "mean_action_mag": {
+            "mean": 0.1612,
+            "std": 0.0359
+          },
+          "mean_action_jerk": {
+            "mean": 0.1193,
+            "std": 0.0658
+          },
+          "mean_r_stability": {
+            "mean": 0.9674,
+            "std": 0.0198
+          },
+          "mean_r_centering": {
+            "mean": 0.0171,
+            "std": 0.017
+          },
+          "mean_r_scale": {
+            "mean": 0.0664,
+            "std": 0.0632
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.4345,
+            "std": 0.0344
+          },
+          "mean_r_smooth": {
+            "mean": -0.0912,
+            "std": 0.0659
+          },
+          "episodes": 5,
+          "early_terminations": 3,
+          "survival_rate_pct": 40.0
+        },
+        "medium": {
+          "total_reward": {
+            "mean": 133.772,
+            "std": 228.8734
+          },
+          "visibility_pct": {
+            "mean": 25.24,
+            "std": 15.158
+          },
+          "mean_centering_dist": {
+            "mean": 0.8582,
+            "std": 0.0561
+          },
+          "mean_fraction": {
+            "mean": 0.1144,
+            "std": 0.0266
+          },
+          "mean_action_mag": {
+            "mean": 0.2295,
+            "std": 0.0411
+          },
+          "mean_action_jerk": {
+            "mean": 0.1611,
+            "std": 0.0791
+          },
+          "mean_r_stability": {
+            "mean": 0.9315,
+            "std": 0.0236
+          },
+          "mean_r_centering": {
+            "mean": 0.059,
+            "std": 0.0501
+          },
+          "mean_r_scale": {
+            "mean": 0.1402,
+            "std": 0.1093
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.384,
+            "std": 0.0246
+          },
+          "mean_r_smooth": {
+            "mean": -0.1324,
+            "std": 0.0774
+          },
+          "episodes": 5,
+          "early_terminations": 4,
+          "survival_rate_pct": 20.0
+        },
+        "fast": {
+          "total_reward": {
+            "mean": 136.928,
+            "std": 127.6317
+          },
+          "visibility_pct": {
+            "mean": 22.32,
+            "std": 3.4383
+          },
+          "mean_centering_dist": {
+            "mean": 0.9058,
+            "std": 0.0576
+          },
+          "mean_fraction": {
+            "mean": 0.1031,
+            "std": 0.0209
+          },
+          "mean_action_mag": {
+            "mean": 0.2291,
+            "std": 0.0758
+          },
+          "mean_action_jerk": {
+            "mean": 0.1285,
+            "std": 0.0728
+          },
+          "mean_r_stability": {
+            "mean": 0.9317,
+            "std": 0.0453
+          },
+          "mean_r_centering": {
+            "mean": 0.0544,
+            "std": 0.0206
+          },
+          "mean_r_scale": {
+            "mean": 0.1051,
+            "std": 0.0251
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.3852,
+            "std": 0.0605
+          },
+          "mean_r_smooth": {
+            "mean": -0.1042,
+            "std": 0.0734
+          },
+          "episodes": 5,
+          "early_terminations": 4,
+          "survival_rate_pct": 20.0
+        }
+      }
+    },
+    "250000": {
+      "global": {
+        "total_reward": {
+          "mean": 168.3293,
+          "std": 185.3089
+        },
+        "visibility_pct": {
+          "mean": 31.4,
+          "std": 27.2353
+        },
+        "mean_centering_dist": {
+          "mean": 0.846,
+          "std": 0.2452
+        },
+        "mean_fraction": {
+          "mean": 0.096,
+          "std": 0.0395
+        },
+        "mean_action_mag": {
+          "mean": 0.1678,
+          "std": 0.1051
+        },
+        "mean_action_jerk": {
+          "mean": 0.0557,
+          "std": 0.0529
+        },
+        "mean_r_stability": {
+          "mean": 0.9418,
+          "std": 0.0649
+        },
+        "mean_r_centering": {
+          "mean": 0.0564,
+          "std": 0.0844
+        },
+        "mean_r_scale": {
+          "mean": 0.1463,
+          "std": 0.1356
+        },
+        "mean_r_vel_damp": {
+          "mean": 0.397,
+          "std": 0.0403
+        },
+        "mean_r_smooth": {
+          "mean": -0.0383,
+          "std": 0.0491
+        },
+        "episodes": 15,
+        "early_terminations": 15,
+        "survival_rate_pct": 0.0
+      },
+      "tiers": {
+        "slow": {
+          "total_reward": {
+            "mean": 116.546,
+            "std": 151.1494
+          },
+          "visibility_pct": {
+            "mean": 37.08,
+            "std": 31.3998
+          },
+          "mean_centering_dist": {
+            "mean": 0.7816,
+            "std": 0.3972
+          },
+          "mean_fraction": {
+            "mean": 0.0616,
+            "std": 0.0334
+          },
+          "mean_action_mag": {
+            "mean": 0.1682,
+            "std": 0.1433
+          },
+          "mean_action_jerk": {
+            "mean": 0.0344,
+            "std": 0.0278
+          },
+          "mean_r_stability": {
+            "mean": 0.916,
+            "std": 0.1043
+          },
+          "mean_r_centering": {
+            "mean": 0.0115,
+            "std": 0.009
+          },
+          "mean_r_scale": {
+            "mean": 0.1446,
+            "std": 0.124
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.3915,
+            "std": 0.0474
+          },
+          "mean_r_smooth": {
+            "mean": -0.0216,
+            "std": 0.0242
+          },
+          "episodes": 5,
+          "early_terminations": 5,
+          "survival_rate_pct": 0.0
+        },
+        "medium": {
+          "total_reward": {
+            "mean": 307.946,
+            "std": 187.3411
+          },
+          "visibility_pct": {
+            "mean": 42.94,
+            "std": 27.462
+          },
+          "mean_centering_dist": {
+            "mean": 0.8633,
+            "std": 0.0369
+          },
+          "mean_fraction": {
+            "mean": 0.1218,
+            "std": 0.0192
+          },
+          "mean_action_mag": {
+            "mean": 0.1894,
+            "std": 0.0959
+          },
+          "mean_action_jerk": {
+            "mean": 0.0746,
+            "std": 0.0555
+          },
+          "mean_r_stability": {
+            "mean": 0.948,
+            "std": 0.0248
+          },
+          "mean_r_centering": {
+            "mean": 0.1348,
+            "std": 0.1084
+          },
+          "mean_r_scale": {
+            "mean": 0.2311,
+            "std": 0.1599
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.3868,
+            "std": 0.0335
+          },
+          "mean_r_smooth": {
+            "mean": -0.0491,
+            "std": 0.0501
+          },
+          "episodes": 5,
+          "early_terminations": 5,
+          "survival_rate_pct": 0.0
+        },
+        "fast": {
+          "total_reward": {
+            "mean": 80.496,
+            "std": 123.2329
+          },
+          "visibility_pct": {
+            "mean": 14.18,
+            "std": 4.8176
+          },
+          "mean_centering_dist": {
+            "mean": 0.8929,
+            "std": 0.121
+          },
+          "mean_fraction": {
+            "mean": 0.1048,
+            "std": 0.0356
+          },
+          "mean_action_mag": {
+            "mean": 0.1459,
+            "std": 0.0496
+          },
+          "mean_action_jerk": {
+            "mean": 0.0581,
+            "std": 0.0611
+          },
+          "mean_r_stability": {
+            "mean": 0.9614,
+            "std": 0.0071
+          },
+          "mean_r_centering": {
+            "mean": 0.023,
+            "std": 0.0163
+          },
+          "mean_r_scale": {
+            "mean": 0.0632,
+            "std": 0.0105
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.4127,
+            "std": 0.0338
+          },
+          "mean_r_smooth": {
+            "mean": -0.0442,
+            "std": 0.061
+          },
+          "episodes": 5,
+          "early_terminations": 5,
+          "survival_rate_pct": 0.0
+        }
+      }
+    },
+    "350000": {
+      "global": {
+        "total_reward": {
+          "mean": 351.6247,
+          "std": 381.2217
+        },
+        "visibility_pct": {
+          "mean": 54.3067,
+          "std": 34.9203
+        },
+        "mean_centering_dist": {
+          "mean": 0.6593,
+          "std": 0.3503
+        },
+        "mean_fraction": {
+          "mean": 0.1106,
+          "std": 0.0722
+        },
+        "mean_action_mag": {
+          "mean": 0.3107,
+          "std": 0.2553
+        },
+        "mean_action_jerk": {
+          "mean": 0.0832,
+          "std": 0.0666
+        },
+        "mean_r_stability": {
+          "mean": 0.8505,
+          "std": 0.2208
+        },
+        "mean_r_centering": {
+          "mean": 0.1196,
+          "std": 0.1197
+        },
+        "mean_r_scale": {
+          "mean": 0.3233,
+          "std": 0.2495
+        },
+        "mean_r_vel_damp": {
+          "mean": 0.3812,
+          "std": 0.0923
+        },
+        "mean_r_smooth": {
+          "mean": -0.078,
+          "std": 0.0708
+        },
+        "episodes": 15,
+        "early_terminations": 15,
+        "survival_rate_pct": 0.0
+      },
+      "tiers": {
+        "slow": {
+          "total_reward": {
+            "mean": 195.022,
+            "std": 400.0428
+          },
+          "visibility_pct": {
+            "mean": 27.8,
+            "std": 35.0868
+          },
+          "mean_centering_dist": {
+            "mean": 0.3627,
+            "std": 0.4643
+          },
+          "mean_fraction": {
+            "mean": 0.0474,
+            "std": 0.0773
+          },
+          "mean_action_mag": {
+            "mean": 0.1884,
+            "std": 0.2331
+          },
+          "mean_action_jerk": {
+            "mean": 0.0465,
+            "std": 0.0526
+          },
+          "mean_r_stability": {
+            "mean": 0.9306,
+            "std": 0.1211
+          },
+          "mean_r_centering": {
+            "mean": 0.0431,
+            "std": 0.0848
+          },
+          "mean_r_scale": {
+            "mean": 0.1246,
+            "std": 0.175
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.4689,
+            "std": 0.0295
+          },
+          "mean_r_smooth": {
+            "mean": -0.0432,
+            "std": 0.052
+          },
+          "episodes": 5,
+          "early_terminations": 5,
+          "survival_rate_pct": 0.0
+        },
+        "medium": {
+          "total_reward": {
+            "mean": 556.416,
+            "std": 211.4368
+          },
+          "visibility_pct": {
+            "mean": 72.94,
+            "std": 23.1017
+          },
+          "mean_centering_dist": {
+            "mean": 0.7728,
+            "std": 0.0665
+          },
+          "mean_fraction": {
+            "mean": 0.1557,
+            "std": 0.0426
+          },
+          "mean_action_mag": {
+            "mean": 0.2228,
+            "std": 0.0502
+          },
+          "mean_action_jerk": {
+            "mean": 0.1382,
+            "std": 0.0759
+          },
+          "mean_r_stability": {
+            "mean": 0.9555,
+            "std": 0.0131
+          },
+          "mean_r_centering": {
+            "mean": 0.2222,
+            "std": 0.1087
+          },
+          "mean_r_scale": {
+            "mean": 0.4976,
+            "std": 0.2376
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.3521,
+            "std": 0.0531
+          },
+          "mean_r_smooth": {
+            "mean": -0.1184,
+            "std": 0.0945
+          },
+          "episodes": 5,
+          "early_terminations": 5,
+          "survival_rate_pct": 0.0
+        },
+        "fast": {
+          "total_reward": {
+            "mean": 303.436,
+            "std": 403.0685
+          },
+          "visibility_pct": {
+            "mean": 62.18,
+            "std": 27.9591
+          },
+          "mean_centering_dist": {
+            "mean": 0.8423,
+            "std": 0.1172
+          },
+          "mean_fraction": {
+            "mean": 0.1287,
+            "std": 0.0387
+          },
+          "mean_action_mag": {
+            "mean": 0.5207,
+            "std": 0.2681
+          },
+          "mean_action_jerk": {
+            "mean": 0.0649,
+            "std": 0.0088
+          },
+          "mean_r_stability": {
+            "mean": 0.6655,
+            "std": 0.2825
+          },
+          "mean_r_centering": {
+            "mean": 0.0936,
+            "std": 0.0835
+          },
+          "mean_r_scale": {
+            "mean": 0.3476,
+            "std": 0.1711
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.3227,
+            "std": 0.0996
+          },
+          "mean_r_smooth": {
+            "mean": -0.0724,
+            "std": 0.0232
+          },
+          "episodes": 5,
+          "early_terminations": 5,
+          "survival_rate_pct": 0.0
+        }
+      }
+    },
+    "400000": {
+      "global": {
+        "total_reward": {
+          "mean": 27.576,
+          "std": 148.3117
+        },
+        "visibility_pct": {
+          "mean": 34.7867,
+          "std": 43.6383
+        },
+        "mean_centering_dist": {
+          "mean": 0.4253,
+          "std": 0.4778
+        },
+        "mean_fraction": {
+          "mean": 0.0461,
+          "std": 0.069
+        },
+        "mean_action_mag": {
+          "mean": 0.6956,
+          "std": 0.1435
+        },
+        "mean_action_jerk": {
+          "mean": 0.0972,
+          "std": 0.0311
+        },
+        "mean_r_stability": {
+          "mean": 0.5125,
+          "std": 0.1222
+        },
+        "mean_r_centering": {
+          "mean": 0.0783,
+          "std": 0.1475
+        },
+        "mean_r_scale": {
+          "mean": 0.1941,
+          "std": 0.2955
+        },
+        "mean_r_vel_damp": {
+          "mean": 0.3964,
+          "std": 0.09
+        },
+        "mean_r_smooth": {
+          "mean": -0.1222,
+          "std": 0.0296
+        },
+        "episodes": 15,
+        "early_terminations": 15,
+        "survival_rate_pct": 0.0
+      },
+      "tiers": {
+        "slow": {
+          "total_reward": {
+            "mean": -14.222,
+            "std": 6.3517
+          },
+          "visibility_pct": {
+            "mean": 18.58,
+            "std": 37.16
+          },
+          "mean_centering_dist": {
+            "mean": 0.221,
+            "std": 0.442
+          },
+          "mean_fraction": {
+            "mean": 0.003,
+            "std": 0.006
+          },
+          "mean_action_mag": {
+            "mean": 0.7074,
+            "std": 0.0915
+          },
+          "mean_action_jerk": {
+            "mean": 0.1103,
+            "std": 0.0291
+          },
+          "mean_r_stability": {
+            "mean": 0.5008,
+            "std": 0.035
+          },
+          "mean_r_centering": {
+            "mean": 0.0014,
+            "std": 0.0028
+          },
+          "mean_r_scale": {
+            "mean": 0.0274,
+            "std": 0.0548
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.4622,
+            "std": 0.01
+          },
+          "mean_r_smooth": {
+            "mean": -0.13,
+            "std": 0.0096
+          },
+          "episodes": 5,
+          "early_terminations": 5,
+          "survival_rate_pct": 0.0
+        },
+        "medium": {
+          "total_reward": {
+            "mean": 102.874,
+            "std": 239.4606
+          },
+          "visibility_pct": {
+            "mean": 22.44,
+            "std": 32.5243
+          },
+          "mean_centering_dist": {
+            "mean": 0.3594,
+            "std": 0.4548
+          },
+          "mean_fraction": {
+            "mean": 0.0419,
+            "std": 0.065
+          },
+          "mean_action_mag": {
+            "mean": 0.6215,
+            "std": 0.1942
+          },
+          "mean_action_jerk": {
+            "mean": 0.0976,
+            "std": 0.0128
+          },
+          "mean_r_stability": {
+            "mean": 0.5623,
+            "std": 0.18
+          },
+          "mean_r_centering": {
+            "mean": 0.0674,
+            "std": 0.1325
+          },
+          "mean_r_scale": {
+            "mean": 0.1292,
+            "std": 0.2269
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.3859,
+            "std": 0.0775
+          },
+          "mean_r_smooth": {
+            "mean": -0.112,
+            "std": 0.0481
+          },
+          "episodes": 5,
+          "early_terminations": 5,
+          "survival_rate_pct": 0.0
+        },
+        "fast": {
+          "total_reward": {
+            "mean": -5.924,
+            "std": 8.2634
+          },
+          "visibility_pct": {
+            "mean": 63.34,
+            "std": 45.2087
+          },
+          "mean_centering_dist": {
+            "mean": 0.6957,
+            "std": 0.4045
+          },
+          "mean_fraction": {
+            "mean": 0.0933,
+            "std": 0.077
+          },
+          "mean_action_mag": {
+            "mean": 0.7578,
+            "std": 0.0785
+          },
+          "mean_action_jerk": {
+            "mean": 0.0837,
+            "std": 0.0392
+          },
+          "mean_r_stability": {
+            "mean": 0.4744,
+            "std": 0.0842
+          },
+          "mean_r_centering": {
+            "mean": 0.166,
+            "std": 0.1844
+          },
+          "mean_r_scale": {
+            "mean": 0.4257,
+            "std": 0.349
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.3411,
+            "std": 0.1035
+          },
+          "mean_r_smooth": {
+            "mean": -0.1245,
+            "std": 0.0071
+          },
+          "episodes": 5,
+          "early_terminations": 5,
+          "survival_rate_pct": 0.0
+        }
+      }
+    },
+    "400001": {
+      "global": {
+        "total_reward": {
+          "mean": 27.3493,
+          "std": 147.7707
+        },
+        "visibility_pct": {
+          "mean": 34.4267,
+          "std": 43.6779
+        },
+        "mean_centering_dist": {
+          "mean": 0.4262,
+          "std": 0.4796
+        },
+        "mean_fraction": {
+          "mean": 0.0462,
+          "std": 0.0689
+        },
+        "mean_action_mag": {
+          "mean": 0.696,
+          "std": 0.1432
+        },
+        "mean_action_jerk": {
+          "mean": 0.0962,
+          "std": 0.031
+        },
+        "mean_r_stability": {
+          "mean": 0.5103,
+          "std": 0.1199
+        },
+        "mean_r_centering": {
+          "mean": 0.0802,
+          "std": 0.1503
+        },
+        "mean_r_scale": {
+          "mean": 0.1938,
+          "std": 0.2956
+        },
+        "mean_r_vel_damp": {
+          "mean": 0.3965,
+          "std": 0.0899
+        },
+        "mean_r_smooth": {
+          "mean": -0.1216,
+          "std": 0.0304
+        },
+        "episodes": 15,
+        "early_terminations": 15,
+        "survival_rate_pct": 0.0
+      },
+      "tiers": {
+        "slow": {
+          "total_reward": {
+            "mean": -14.248,
+            "std": 6.3441
+          },
+          "visibility_pct": {
+            "mean": 18.58,
+            "std": 37.16
+          },
+          "mean_centering_dist": {
+            "mean": 0.2206,
+            "std": 0.4412
+          },
+          "mean_fraction": {
+            "mean": 0.003,
+            "std": 0.006
+          },
+          "mean_action_mag": {
+            "mean": 0.7098,
+            "std": 0.0915
+          },
+          "mean_action_jerk": {
+            "mean": 0.1082,
+            "std": 0.0285
+          },
+          "mean_r_stability": {
+            "mean": 0.4965,
+            "std": 0.0345
+          },
+          "mean_r_centering": {
+            "mean": 0.0014,
+            "std": 0.0028
+          },
+          "mean_r_scale": {
+            "mean": 0.0274,
+            "std": 0.0548
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.462,
+            "std": 0.01
+          },
+          "mean_r_smooth": {
+            "mean": -0.129,
+            "std": 0.0101
+          },
+          "episodes": 5,
+          "early_terminations": 5,
+          "survival_rate_pct": 0.0
+        },
+        "medium": {
+          "total_reward": {
+            "mean": 102.464,
+            "std": 238.5352
+          },
+          "visibility_pct": {
+            "mean": 22.2,
+            "std": 32.0734
+          },
+          "mean_centering_dist": {
+            "mean": 0.3586,
+            "std": 0.4534
+          },
+          "mean_fraction": {
+            "mean": 0.0418,
+            "std": 0.0647
+          },
+          "mean_action_mag": {
+            "mean": 0.6194,
+            "std": 0.1927
+          },
+          "mean_action_jerk": {
+            "mean": 0.0952,
+            "std": 0.0167
+          },
+          "mean_r_stability": {
+            "mean": 0.563,
+            "std": 0.1758
+          },
+          "mean_r_centering": {
+            "mean": 0.071,
+            "std": 0.1395
+          },
+          "mean_r_scale": {
+            "mean": 0.128,
+            "std": 0.2245
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.3864,
+            "std": 0.0774
+          },
+          "mean_r_smooth": {
+            "mean": -0.1106,
+            "std": 0.0492
+          },
+          "episodes": 5,
+          "early_terminations": 5,
+          "survival_rate_pct": 0.0
+        },
+        "fast": {
+          "total_reward": {
+            "mean": -6.168,
+            "std": 8.5605
+          },
+          "visibility_pct": {
+            "mean": 62.5,
+            "std": 46.0977
+          },
+          "mean_centering_dist": {
+            "mean": 0.6993,
+            "std": 0.4104
+          },
+          "mean_fraction": {
+            "mean": 0.0939,
+            "std": 0.0766
+          },
+          "mean_action_mag": {
+            "mean": 0.7586,
+            "std": 0.078
+          },
+          "mean_action_jerk": {
+            "mean": 0.0853,
+            "std": 0.0391
+          },
+          "mean_r_stability": {
+            "mean": 0.4716,
+            "std": 0.0812
+          },
+          "mean_r_centering": {
+            "mean": 0.1681,
+            "std": 0.1852
+          },
+          "mean_r_scale": {
+            "mean": 0.4259,
+            "std": 0.3506
+          },
+          "mean_r_vel_damp": {
+            "mean": 0.3411,
+            "std": 0.1035
+          },
+          "mean_r_smooth": {
+            "mean": -0.1253,
+            "std": 0.0075
+          },
+          "episodes": 5,
+          "early_terminations": 5,
+          "survival_rate_pct": 0.0
+        }
+      }
+    }
+  }
+}

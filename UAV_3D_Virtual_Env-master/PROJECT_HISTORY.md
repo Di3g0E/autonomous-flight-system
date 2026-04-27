@@ -3823,3 +3823,859 @@ Analizar los resultados de la iteración `v4_2`, diseñada para corregir los def
 3. **Reward Shaping (Ajustes Futuros)**: El comportamiento en el punto óptimo (350k) revela que el agente prioriza centrar la cámara por encima de no estrellarse (0% supervivencia). Para futuras versiones, se recomienda:
    - Aumentar el peso de la recompensa de estabilidad (`r_stability`).
    - Aumentar severamente la penalización por comandos bruscos (`action_jerk`) para evitar movimientos erráticos y prevenir caídas.
+
+---
+
+## [Fecha: 2026-04-25] - Optimización del Framework de Evaluación y Visualización (Quad-View)
+
+### Motivación
+Estandarizar y mejorar profundamente la retroalimentación visual y analítica de los episodios de evaluación. Anteriormente, era complicado diagnosticar las fallas del dron al perder de vista la esfera objetivo debido a la falta de métricas visuales sincronizadas y cambios de perspectiva. 
+
+### Descripción e Implementaciones
+Se rediseñó por completo el pipeline de evaluación (`test_spiral_track.py`) para incluir herramientas de diagnóstico avanzado:
+
+1. **Grabación de Vídeo en Cuadrícula (Quad-View 2x2)**:
+   Se implementó una compilación de vídeo que unifica cuatro fuentes de información sincronizadas en un único frame:
+   - *Panel 1*: Cámara cruda (Raw Camera FPV).
+   - *Panel 2*: Entrada RL (32x32) que es lo que realmente procesa el modelo neuronal.
+   - *Panel 3*: Detección HSV y centroide, mostrando la máscara de visión y tracking computacional.
+   - *Panel 4*: Vista externa.
+
+2. **Cámara Externa Fija Constante**:
+   Se configuró una vista de cámara externa global, persistente y estática para todos los episodios de prueba. Esto permite observar el comportamiento macro del dron y la trayectoria de la esfera desde una referencia fija, facilitando la comprensión de cómo el dron se comporta cuando falla en estabilizarse o se aleja demasiado.
+
+3. **Gráficos de Altitud y Telemetría**:
+   - Generación automática de gráficos de altitud por episodio (`_plot_altitude`), comparando la altura Z del dron frente a la del objetivo.
+   - Generación de un gráfico consolidado multi-episodio (`_plot_all_altitudes`) que superpone el rendimiento de múltiples escenarios para detectar patrones de colapso a nivel macro.
+
+4. **Corrección de la Trayectoria Lemniscata**:
+   Se forzó a que la esfera objetivo mantenga una altitud estrictamente constante durante la ejecución de su trayectoria en forma de lemniscata (infinito). Esto eliminó variables de confusión durante el análisis de estabilización de altura del agente PPO.
+
+### Archivos Afectados
+- `tests/test_spiral_track.py`:
+  - Nuevas funciones de renderizado OpenCV (`_make_panel`, `_build_detection_frame`).
+  - Lógica de ploteo con `matplotlib` embebida y guardado de gráficos.
+  - Generación de objetos `VideoWriter` estructurados.
+- `src/envs/panda3d_quadrotor_env.py`:
+  - Corrección de la variable `z` de la diana dinámica para fijar su altitud durante la trayectoria de lemniscata.
+
+---
+
+## [Fecha: 2026-04-26] - Currículo de Inicialización basado en Geometría del FOV (v5 / v4.3)
+
+### Motivación
+Implementar una inicialización del objetivo (*target*) de manera dinámica y matemáticamente fundamentada en el área de visión (Field of View) de la cámara. Las fases anteriores del currículo generaban posiciones de inicio (offsets) en base a rangos de distancia fijos y cuadrados (ej. `-0.2m` a `+0.2m` en ejes X e Y). Esto causaba sesgos posicionales en las esquinas y no aseguraba que el objetivo estuviese dentro de un porcentaje específico del área visual, limitando la progresión suave del aprendizaje.
+
+### Descripción y Cálculos
+Se modificó la envoltura (`MovingTargetV4Wrapper`) y la lógica del currículo en `train_hover_track_v4.py` para guiar al agente de un seguimiento centralizado fácil a recuperaciones desde el borde de la visión. 
+
+1. **Cálculo Geométrico del Radio Máximo de Visión (`r_max`)**:
+   - Parámetros de cámara: Formato de sensor (`filmSize`) de 36x24 mm y lente (`focalLength`) de 45 mm.
+   - Altura de planeo (`hover_height`): 1.394 metros.
+   - El radio vertical máximo visible en el suelo (asumiendo que la imagen final de 32x32 corta los laterales) se determina mediante el ángulo de visión vertical:
+     `r_max = hover_height * (half_film_h / focal_length) = 1.394 * (12.0 / 45.0) ≈ 0.372 m`.
+
+2. **Diseño de las Fases del Currículo basadas en Área**:
+   Para que la probabilidad de aparición sea uniforme respecto al área (y no al radio lineal), el radio en metros se calcula como la raíz cuadrada del porcentaje de área por el `r_max`:
+   - **Fase A (0-20% del entrenamiento):** Objetivo aparece en el **0-10% del área** central de la imagen. 
+     - Rango relativo radial: 0 a $\sqrt{0.10}$ (~31.6%).
+     - *Offset* real: de 0.0 m a ~0.118 m.
+   - **Fase B (20-80% del entrenamiento):** Objetivo aparece en el **10-75% del área** (anillo medio).
+     - Rango relativo radial: $\sqrt{0.10}$ a $\sqrt{0.75}$ (~31.6% a ~86.6%).
+     - *Offset* real: de ~0.118 m a ~0.322 m.
+   - **Fase C (80-100% del entrenamiento):** Objetivo aparece en el **75-100% del área** (anillo de borde).
+     - Rango relativo radial: $\sqrt{0.75}$ a $1.0$ (~86.6% a 100%).
+     - *Offset* real: de ~0.322 m a 0.372 m.
+
+3. **Muestreo en Coordenadas Polares**:
+   Se sustituyó la generación de inicio por offsets cuadrados (`x, y = rand(-off, off)`) por un muestreo uniforme dentro de un anillo circular (área delimitada por `r_min` y `r_max`):
+   - $r = \sqrt{U(r_{min}^2, r_{max}^2)}$
+   - $\theta = U(0, 2\pi)$
+   - Esto previene el agrupamiento del objetivo en el centro y asegura una distribución espacial estocásticamente equilibrada de cara al entrenamiento visual.
+
+### Resolución de Errores y Ajustes en Evaluación
+Durante la evaluación masiva de los checkpoints recién entrenados en la iteración v5, surgió un error debido a que se intentó ejecutar un script inexistente en el directorio `/scripts/`. 
+- **Problema**: El comando buscaba el script de análisis en `scripts/test_spiral_track.py`, pero la ubicación real del archivo estaba en la carpeta de testing (`tests/`). Adicionalmente, el formato del flag de parámetros en el parser de este script esperaba `--models` (plural) en lugar de `--model-path`, el cual es típico de otros módulos.
+- **Solución**: Se localizó el script correcto mediante el comando recursivo en PowerShell y se reescribió el bucle de ejecución:
+  - El nuevo comando escanea el directorio de checkpoints (`models/hover_track_v5/checkpoints/*.zip`).
+  - Llama explícitamente a `tests/test_spiral_track.py` inyectando `--models` con la ruta completa.
+  - Para aislar los resultados y evitar sobrescrituras, se inyectó la flag `--output-dir` para que los gráficos y videos se guardasen en subcarpetas nominales dentro de `/experiments/eval_v5/`.
+  - Se omitió explícitamente `--quad-view` dado que el script original integra la generación de vista de cuadrícula cuádruple por defecto cuando hay cámaras extendidas detectadas.
+
+### Archivos Afectados
+- `scripts/train_hover_track_v4.py`: 
+  - Cálculo y asignación de la variable `fov_radius_max` basada en la geometría de lente y altura.
+  - Reestructuración de `CurriculumV4Callback` para integrar escalas de porcentaje de área (0.10 y 0.75).
+  - Sustitución de lógica estocástica en `MovingTargetV4Wrapper.reset()` para operar con coordenadas polares (`cos` y `sin`) y anillos concentricos.
+- `PROJECT_HISTORY.md`: Inclusión de la última entrada documental referenciando justificaciones geométricas, cambios en el paradigma de muestreo y estabilización de evaluaciones CLI.
+
+---
+
+## [Fecha: 2026-04-26] - Release v6: Arquitectura de Recompensa para Supervivencia y Estabilidad
+
+### Motivación
+Tras el análisis masivo de los checkpoints de la v5, se identificó un problema crítico: aunque el agente aprendió un seguimiento visual excepcional (el mejor hasta la fecha con >40% de visibilidad), su tasa de supervivencia era del **0%**. El dron realizaba maniobras tan agresivas para mantener el objetivo centrado que perdía el control de su propia dinámica de vuelo, resultando en colisiones constantes contra el suelo o por pérdida de altitud. 
+
+Esta versión (v6) introduce una reestructuración de la función de recompensa y corrige un fallo sistémico en la sincronización de las físicas que invalidaba los intentos previos de estabilización.
+
+### Implementaciones y Decisiones de Diseño
+
+#### 1. Rediseño de Recompensa Aditiva (v6 Reward Shaping)
+Se decidió implementar ajustes aditivos en el `MovingTargetV4Wrapper` en lugar de modificar la función de recompensa base del entorno (`panda3d_quadrotor_env.py`). Esto permite iterar sobre el comportamiento del agente sin romper la compatibilidad con modelos entrenados en versiones anteriores (v3.1/v4/v5).
+
+*   **Bonus de Estabilidad Aditivo (+2.0 × r_stability)**: 
+    - **Problema**: En v5, la estabilidad era un "gate" multiplicativo. Si el dron era inestable pero el objetivo estaba muy centrado, la recompensa seguía siendo alta, lo que incentivaba sacrificar estabilidad por seguimiento.
+    - **Decisión**: Añadir una recompensa directa por volar nivelado. Ahora, un vuelo estable otorga hasta +2.0 puntos por paso independientemente de la visibilidad, creando un incentivo real por la supervivencia.
+*   **Penalización de Jerk Extra (-1.2 × ||Δaction||²)**:
+    - **Argumento**: Se observó que el agente v5 generaba oscilaciones violentas en los motores (jerk). La penalización original de -0.3 era insuficiente para frenar esta agresividad. Se ha aumentado el peso efectivo para forzar una política de control mucho más suave y fluida.
+*   **Penalización de Desviación de Altitud (-1.0 × error)**:
+    - **Motivación**: Durante los seguimientos rápidos, el dron tendía a perder altura "agachándose" para perseguir el objetivo, lo que terminaba en colisión. Se ha creado un "muro de recompensa" que castiga alejarse de la altura de planeo ideal (`hover_height`).
+
+#### 2. Corrección del "Bug de Teletransporte" (Físicas)
+Se descubrió una inconsistencia crítica en cómo el wrapper reposicionaba al dron al inicio de cada episodio:
+*   **Hallazgo**: El wrapper modificaba `self.base_env.state`, pero el integrador numérico de las físicas (`solve_ivp` en `quad.py`) utiliza `previous_state` como condición inicial para el cálculo del siguiente paso. 
+*   **Efecto**: El dron se posicionaba visualmente sobre el objetivo en el frame 0, pero en el frame 1 el motor de físicas lo "teletransportaba" de vuelta a la posición residual del reset anterior (usualmente cerca del origen), perdiendo el objetivo de vista instantáneamente.
+*   **Solución**: Sincronización explícita de `state` y `previous_state` en el motor de físicas durante el reset del wrapper. Esto estabiliza el inicio del episodio y permite que el currículo funcione realmente.
+
+#### 3. Currículo FOV Fase C+ (Periferia Extrema)
+Se ha refinado la Fase C del currículo de inicialización para cubrir escenarios de recuperación crítica:
+*   **Decisión**: El radio máximo de spawn se ha extendido hasta `fov_radius + target_radius` (aprox. 0.62m). 
+*   **Lógica**: Esto permite que la esfera objetivo aparezca en el borde mismo de la imagen o incluso parcialmente fuera de ella. Entrena al agente para realizar maniobras de "re-enganche" cuando está a punto de perder el contacto visual, mejorando la robustez en maniobras de giro rápido.
+
+### Entrenamiento y Estrategia
+Se ha optado por realizar **Fine-tuning** del modelo v5 (checkpoint 250k) en lugar de empezar de cero. 
+- **Justificación**: El modelo 250k ya posee una comprensión espacial y visual excelente del objetivo. El entrenamiento v6 se enfoca únicamente en "limpiar" su dinámica de vuelo y aplicar las nuevas penalizaciones de estabilidad sobre una base de seguimiento ya establecida.
+
+### Archivos Afectados
+- `scripts/train_hover_track_v4.py`:
+  - Implementación de los 3 nuevos componentes de recompensa en `step()`.
+  - Inyección de nuevos argumentos CLI (`--w-stability-bonus`, `--w-extra-jerk`, `--w-altitude`).
+  - Corrección de la sincronización de estado en `reset()` para el motor de físicas.
+  - Actualización de los umbrales de la Fase C en el `CurriculumV4Callback`.
+- `PROJECT_HISTORY.md`: Actualización exhaustiva de la cronología y decisiones técnicas.
+
+---
+
+## [Fecha: 2026-04-27] - Diagnóstico del "Spawn Altitude Bug" y Lanzamiento de v6_fixed
+
+### Motivación
+Tras realizar una evaluación exhaustiva de los checkpoints del modelo v6 (50k a 400k pasos), se observó que la tasa de supervivencia continuaba siendo del **0%**, con episodios que terminaban sistemáticamente en el paso 15 (0.15 segundos). A pesar de las mejoras en la función de recompensa y la corrección del "Teleportation Bug", el agente era incapaz de mantenerse en el aire.
+
+Este descubrimiento llevó a un análisis profundo de la telemetría y los logs de física, revelando un error de inicialización oculto en el entorno de simulación que estaba saboteando tanto el entrenamiento como la evaluación.
+
+### Descubrimiento: El "Spawn Altitude Bug"
+
+#### 1. Error en la Lógica de Altitud Relativa
+Se identificó que en `src/envs/panda3d_quadrotor_env.py`, la función `_randomize_target()` calculaba la altura del objetivo (`target_z`) restando la `hover_height` a la posición actual del dron.
+*   **Problema**: Durante el `reset()`, el dron comienza en `z ≈ 0`. Esto resultaba en un objetivo generado a `z ≈ -1.39m`.
+*   **Consecuencia Física**: El wrapper luego posicionaba al dron exactamente a `hover_height` por encima del objetivo, lo que situaba al dron en una altitud física de **`z ≈ 0.14m`**.
+*   **Inestabilidad Inmediata**: A una altitud de solo 14 cm, el radio de colisión del dron (0.3m) está virtualmente tocando el suelo. Cualquier pequeña oscilación o acción del motor provocaba una terminación inmediata por violación de límites (flip) o colisión, explicando por qué los episodios duraban exactamente 15 pasos.
+
+#### 2. Paradoja Visual (Offset +5m)
+El bug pasó desapercibido inicialmente porque el sistema de visualización de Panda3D utiliza un **offset de +5m** para renderizar la ciudad. 
+*   **Visualmente**: El dron aparecía a `z_vis = 5.14m` y la esfera a `z_vis = 3.75m`. Ambos se veían volando "correctamente" sobre la ciudad en los vídeos.
+*   **Físicamente**: El motor de físicas operaba cerca del límite crítico de `z=0` (suelo físico), donde la estabilidad es mínima y el margen de error angular es nulo.
+
+### Implementaciones y Decisiones de Acción
+
+#### 1. Corrección del Entorno (Grounding the Target)
+Se ha modificado `src/envs/panda3d_quadrotor_env.py` para desacoplar la altura del objetivo de la posición del dron durante el reset:
+*   **Decisión**: La esfera objetivo ahora se fija estrictamente en **`z = 0.0`** (suelo físico) cuando la cámara apunta hacia abajo.
+*   **Resultado**: Al resetear, el dron se posiciona automáticamente en `z = 1.394m` (altura de planeo real), proporcionando un margen de seguridad física de más de 1 metro y estabilizando el inicio del vuelo.
+
+#### 2. Lanzamiento de v6_fixed (Re-entrenamiento)
+Se determinó que los modelos v6 anteriores estaban "envenenados" por este bug, ya que el agente había aprendido a intentar mantener una altitud de 14cm para centrar un objetivo que creía que estaba bajo tierra.
+*   **Acción**: Se ha iniciado un nuevo entrenamiento desde cero (usando el checkpoint v4.1/150k como base) con el entorno ya corregido.
+*   **Justificación del Checkpoint Base (v4.1 @ 150k)**:
+    - **Punto Dulce de Aprendizaje**: A los 150k pasos, el modelo ya domina el seguimiento visual de la lemniscata (Fase B) pero aún no ha desarrollado los "vicios" de agresividad excesiva (jerk) observados en fases más avanzadas.
+    - **Rendimiento Comprobado**: Las métricas históricas muestran que este checkpoint específico mantenía un 60% de supervivencia en velocidades medias, siendo el cimiento más estable antes de la degradación por sobre-optimización de visibilidad.
+    - **Saneamiento**: Al evitar los checkpoints de la v5, nos aseguramos de no heredar comportamientos erróneos derivados del bug de físicas que invalidó esa versión.
+*   **Configuración**: Se mantienen los pesos de la v6 (Estabilidad +2.0, Jerk -1.2, Altitud -1.0) para asegurar que el agente aprenda a volar correctamente a la altura real de misión.
+
+### Archivos Afectados
+- `src/envs/panda3d_quadrotor_env.py`: Modificada la función `_randomize_target()` para forzar `target_z = 0.0` en modo `camera_down`.
+- `PROJECT_HISTORY.md`: Registro de este diagnóstico crítico y el cambio de rumbo hacia `v6_fixed`.
+
+---
+
+## [Fecha: 2026-04-27] - Resultados de Entrenamiento `hover_track_v6_fixed` (400k pasos)
+
+### Configuración de Entrenamiento
+Se completó el reentrenamiento del modelo `v6_fixed` con el bug de altitud de spawn ya corregido. Parámetros consolidados desde `models/hover_track_v6_fixed/training_summary.json`:
+
+- **Algoritmo**: SAC, arquitectura `[256, 128]`, `policy_params = 195 724`.
+- **Pasos totales**: 400 000 (8 checkpoints intermedios cada 50k).
+- **Tiempo de entrenamiento**: ~14 286 s (≈3 h 58 min) — la mitad del tiempo invertido en v6 buggy (26 922 s) gracias a la mayor cantidad de episodios largos efectivos.
+- **Episodios completados**: 5 282 (vs. 6 908 en v6 buggy: episodios más largos ⇒ menos episodios por step).
+- **Recompensa media final**: `14.03` (positiva, contraste claro frente a `−14.15` de v6 buggy).
+- **Checkpoint base**: `hover_track_v4_1/checkpoints/model_150000_steps.zip` (en lugar del v5/250k contaminado).
+- **`learning_rate = 3e-4`** (vs. `1e-4` en v6 buggy): se aumentó la tasa para acelerar la adaptación al entorno corregido y aprovechar la "limpieza" de la base v4.1.
+- **Currículo Fase B/C revisado**: `B = 20%-65%` y `C = 65%-100%` (vs. `20%-80%-100%` en v4.2). Se adelantó la entrada en Fase C para invertir más pasos en el aprendizaje de recuperaciones de borde.
+- **`max_speed_c = 0.25 m/s`**, `lemniscate_scale = 2.0 m`, `hover_height = 1.394 m`, `crash_penalty_base = 0.0`.
+- **Reward_version registrado**: `"v3.1 (unchanged)"` en el JSON, confirmando que las penalizaciones de jerk/altitud/estabilidad se aplican como **shaping aditivo dentro del wrapper** y no como cambios al motor base.
+
+### Evaluación Multi-Checkpoint (`experiments/eval_v6_fixed/`)
+Se evaluaron los 8 checkpoints (50k–400k) sobre los cuatro escenarios estándar del pipeline `test_spiral_track.py`: `slow_easy`, `medium`, `fast_hard`, `recovery`. Configuración: 3 episodios por escenario, `duration = 20 s`, `--no-display`, integración con el controlador de búsqueda en espiral (`models/spiral_follow/best_model.zip`).
+
+**Tabla resumen (mean por escenario, n = 3):**
+
+| Ckpt | Escenario | Steps | Reward | Visibility | Survival | Jerk |
+|:---:|:---:|---:|---:|---:|---:|---:|
+| **50k** | slow_easy | 778 | −174.2 | 19.7 % | 0/3 | 0.045 |
+| **50k** | medium | 801 | −52.4 | 18.5 % | 0/3 | 0.050 |
+| **50k** | fast_hard | 471 | 0.8 | 34.4 % | 0/3 | 0.068 |
+| **50k** | recovery | 1044 | −316.1 | 22.3 % | 1/3 | 0.065 |
+| **100k** ★ | slow_easy | **1738** | **10.7** | 26.4 % | **1/3** | 0.041 |
+| **100k** ★ | medium | **1605** | **42.0** | 19.1 % | **1/3** | 0.033 |
+| **100k** ★ | fast_hard | **1549** | 4.2 | 26.6 % | **1/3** | 0.038 |
+| **100k** ★ | recovery | 1425 | −13.8 | 24.5 % | **1/3** | 0.030 |
+| 150k | slow_easy | 140 | −69.0 | 7.6 % | 0/3 | 0.065 |
+| 150k | medium | 225 | −41.1 | 17.0 % | 0/3 | 0.058 |
+| 200k | slow_easy | 1453 | −242.1 | 10.3 % | 1/3 | 0.017 |
+| 200k | fast_hard | 1514 | −349.7 | 9.6 % | **2/3** | 0.019 |
+| 250k | medium | 493 | −165.7 | 4.9 % | 0/3 | 0.026 |
+| 300k | (todos) | 13 | −15.5 | 0.0 % | 0/3 | 0.090 |
+| 350k | (todos) | 14 | −15.6 | 0.0 % | 0/3 | 0.114 |
+| 400k | (todos) | 14 | −15.4 | 0.0 % | 0/3 | 0.090 |
+
+★ = Checkpoint óptimo (`hover_track_v6_fixed/100k`).
+
+### Análisis del Comportamiento por Fase
+
+1. **Fase Inicial (50k pasos)**: el agente vuela tiempos prolongados (700–1000 steps en `slow_easy`/`medium`/`recovery`) pero todavía conserva oscilaciones residuales heredadas del fine-tuning (jerk ≈ 0.05). Visibilidad baja (~20 %) porque aún está priorizando el "no caer" sobre el centrado.
+2. **Pico Funcional (100k pasos)**: **mejor checkpoint global del experimento v6_fixed**. Vuela ~1500–1700 steps en todos los escenarios y consigue al menos 1/3 de supervivencias en cada uno. Jerk descendido a 0.030–0.041 (suavización efectiva). Visibilidad estable ~20–27 %. Es el primer modelo de toda la línea TFG que combina recompensa positiva en `medium` con vuelo prolongado.
+3. **Regresión local (150k pasos)**: la entrada en Fase B con objetivos algo más rápidos colapsa temporalmente la política (140–324 steps por episodio). Indica un *catastrophic transition* al currículo medio.
+4. **Recuperación parcial (200k pasos)**: el agente se reestabiliza para escenarios de alta velocidad (`fast_hard`: 2/3 supervivencias, 1514 steps) pero sacrificando casi por completo el centrado (visibilidad < 10 %). Comportamiento defensivo "huye y aterriza".
+5. **Colapso terminal (300k–400k pasos)**: episodios duran exactamente 13–15 steps independientemente del escenario, jerk reasciende a 0.09–0.14. Aunque el bug de spawn ya está corregido, el agente vuelve a aprender una política dominada por acciones extremas (saturación de motores) que provoca terminación inmediata por *flip*. Esto reproduce el patrón de `Catastrophic Forgetting` observado en v3.1@400k y v4.1@350k.
+
+### Evaluación Extendida del Mejor Checkpoint (`experiments/visual_test_v6_100k/`)
+Se ejecutó una validación adicional centrada en `hover_track_v6_fixed/model_100000_steps.zip` con `duration = 60 s` y 5 episodios por escenario para confirmar la calidad real de su política:
+
+| Escenario | Steps | Reward | Visibility | Survival | Jerk |
+|:---|---:|---:|---:|---:|---:|
+| medium | 1566 | +7.9 | 21.1 % | 0/5 | 0.031 |
+| recovery | 2213 | −60.9 | 26.8 % | 0/5 | 0.038 |
+
+- En `recovery` el dron alcanza vuelos de **22 segundos sostenidos** (2213 steps × 0.01 s) — un orden de magnitud superior a cualquier checkpoint v6 anterior.
+- A pesar de `survival_rate = 0%` con `duration = 60 s`, el agente está consiguiendo lo que la versión buggy nunca hizo: estabilizarse físicamente a 1.39 m durante decenas de segundos.
+- La penalización aditiva de jerk (-1.2) se refleja en jerk efectivo ≈ 0.03 en los episodios largos, frente a ≈ 0.10 del v5/250k.
+
+### Evaluación Focalizada `eval_v6_fixed_200k` (10 ep/tier)
+Se ejecutó una segunda evaluación intensiva con 10 episodios por tier (slow/medium/fast) sobre los checkpoints 200k y 400k, totalizando 30 episodios por checkpoint:
+
+- **200k**: `total_reward ≈ −351`, `r_stability = 0.889`, `mean_action_mag = 0.235`, `mean_action_jerk = 0.017`, `survival_rate = 0%`. Episodios reales de ~870 steps en *slow* y ~880 en *medium*. **El agente vuela de forma estable pero la métrica `visibility_pct = 0%` sugiere que el detector HSV no engancha al objetivo durante estos episodios** — apunta a un posible bug en el reset de los tests focalizados o que la cámara está orientada con un offset que pierde la esfera al inicio.
+- **400k**: colapso completo, `r_stability = 0.44`, `action_mag = 0.86`, `jerk = 0.041`, episodios truncados a ~25 steps. Confirma plenamente el patrón de saturación motora observado en la evaluación 3-ep.
+
+### Decisiones Tomadas tras la Evaluación
+1. **`100k` como checkpoint productivo**: se promociona el modelo `hover_track_v6_fixed/checkpoints/model_100000_steps.zip` como punto de referencia operativo, en sustitución del v5/250k previamente recomendado. Pese a tener visibilidad ligeramente inferior, su capacidad de mantener vuelos prolongados (>15 s) lo hace válido para misiones reales.
+2. **Early stopping efectivo en 100k**: documentado que para esta línea de fine-tuning el entrenamiento útil concluye en ~100k pasos. Se evita exponer al agente al currículo Fase C completo (≥200k) hasta tener una solución para el catastrophic forgetting.
+3. **Investigación pendiente del `visibility_pct = 0%`**: aunque la estabilidad es real, hay que comprobar por qué la métrica de detección retorna cero en evaluaciones focalizadas pese a que el dron sigue volando sobre la esfera; posiblemente un desfase en la inicialización del wrapper de tests o el modo `camera_down` con `target_z = 0`.
+4. **Hipótesis para v7 (futuro)**: explorar (a) reducción del peso `--w-extra-jerk` de `−1.2` a `−0.8` para evitar la rigidez en Fase C, (b) introducir EWC o KL-anchor sobre la política base v4.1/150k para mitigar el catastrophic forgetting más allá de 100k, y (c) sustituir el shaping aditivo de altitud por una *terminación blanda* cuando la cota se desvíe más de 1 m, evitando "muros" continuos en la recompensa.
+
+### Comparativa Resumen entre Versiones (Puntos de Operación)
+
+| Versión | Ckpt prod. | Steps típ. (medium) | Visibility | Survival (medium) | Comentario |
+|:---|:---:|---:|---:|---:|:---|
+| v3.1 (estática) | 350k | ~3000 | n/a | 93 % | Línea base estática |
+| v4.1 (lemniscata) | 150k | ~1100 | 35 % | 60 % | Mejor en dinámica antes de v5 |
+| v4.2 / v4.3 (FOV) | 350k | 383 | 42 % | 0 % | Visibilidad alta, sin supervivencia |
+| v5 (250k) | 250k | 444 | 56 % | 0 % | Pico de tracking; envenenado por spawn-bug |
+| v6 (buggy) | — | 15 | 0 % | 0 % | Bloqueado por spawn-bug |
+| **v6_fixed** ★ | **100k** | **1605** | **19 %** | **33 %** | **Primer modelo con vuelo + tracking sostenidos sobre el spawn corregido** |
+
+### Archivos Afectados / Generados
+- `models/hover_track_v6_fixed/`: 8 checkpoints + `best_model.zip` + `training_log.csv` + `training_summary.json`.
+- `experiments/eval_v6_fixed/`: `summary.json`, `results.csv`, `comparison_main.png`, `survival_rates.png`, carpeta `videos/` (quad-view por episodio), carpeta `plots/` (telemetría altitud).
+- `experiments/eval_v6_fixed_200k/`: `checkpoint_comparison.json`, `checkpoint_episodes.csv`, `checkpoint_global.png`, `checkpoint_tiers.png` (evaluación focalizada 200k vs 400k).
+- `experiments/visual_test_v6_100k/`: validación extendida 60 s del checkpoint productivo.
+- `scripts/train_hover_track_v4.py`: ajuste del schedule `B/C` a `20–65–100 %` y `learning_rate = 3e-4` para esta corrida.
+- `tests/test_hover_track.py`, `tests/test_spiral_track.py`: pequeñas correcciones para soportar el spawn corregido (objetivo en `z = 0`) y la sincronización `state ↔ previous_state` durante el reset del wrapper.
+- `RESUMEN_AVANCES_TFG.md`: documento ejecutivo creado para sintetizar la trayectoria v3.1 → v6_fixed para entrega académica.
+- `PROJECT_HISTORY.md`: incorporación de esta entrada con resultados completos del entrenamiento, evaluación y decisiones derivadas.
+
+---
+
+## [Fecha: 2026-04-27] - Comparativa Auxiliar de Checkpoints v4.3 (`comparacion_checkpoints_v4`)
+
+### Motivación
+Antes de promover el flujo v6_fixed, se realizó una comparativa rápida de los 8 checkpoints de la versión `hover_track_v4_3` (modelo entrenado con el currículo geométrico FOV documentado en la entrada del 2026-04-26) para confirmar que la degradación observada no era específica de la familia v5/v6 sino estructural al currículo de Fase C heredado.
+
+### Configuración
+- 1 escenario evaluado (`medium`), 3 episodios por checkpoint, `duration = 20 s`.
+- Pipeline: `tests/test_spiral_track.py` con integración del controlador en espiral.
+- Datos guardados en `experiments/comparacion_checkpoints_v4/`.
+
+### Resultados (mean, n = 3, escenario `medium`)
+
+| Ckpt | Steps | Reward | Visibility | Survival | Jerk |
+|:---:|---:|---:|---:|---:|---:|
+| 50k | 1306 | 100.8 | 32.3 % | 1/3 | 0.064 |
+| 100k | 602 | 124.2 | 31.9 % | 0/3 | 0.071 |
+| 150k | 553 | −42.5 | 22.5 % | 0/3 | 0.071 |
+| **200k** | 258 | **398.0** | **80.2 %** | 0/3 | 0.114 |
+| 250k | 1119 | 74.3 | 22.8 % | 0/3 | 0.080 |
+| 300k | 93 | −15.1 | 68.7 % | 0/3 | 0.128 |
+| 350k | 54 | 89.4 | 51.8 % | 0/3 | 0.136 |
+| 400k | 16 | −14.2 | 13.3 % | 0/3 | 0.147 |
+
+### Conclusiones
+- El **checkpoint 200k de v4.3** muestra el pico histórico de visibilidad en `medium` (80.2 %) confirmando que el currículo FOV sí mejora el centrado, pero al coste de episodios cortos (258 steps).
+- El **50k** es el único que combina vuelo largo (1306 steps) con supervivencia parcial (1/3), pero su visibilidad es modesta (32 %).
+- El patrón de degradación a partir del 250k es **idéntico al observado en v6_fixed**: jerk ascendente, episodios cada vez más cortos, hasta el colapso a 16 steps en 400k. Esto refuerza la hipótesis de que el problema es **inherente al currículo Fase C** (objetivo en periferia extrema + altas velocidades) y no a la combinación de penalizaciones aditivas v6.
+- Decisión consecuente: cualquier futura iteración (v7) debe mantener fija la inversión en Fase C (≤30 % del entrenamiento total) o introducir mecanismos de regularización contra el olvido catastrófico.
+
+### Archivos Afectados / Generados
+- `experiments/comparacion_checkpoints_v4/`: `summary.json`, `results.csv`, `comparison_main.png`, `survival_rates.png`, `plots/` (altitudes por episodio).
+- `experiments/eval_250k_definitivo/`, `experiments/demo_best_v5/`, `experiments/hover_track_v5/`: evaluaciones puntuales adicionales del checkpoint v4.3/250k y v5/250k usadas durante esta auditoría comparativa.
+- `experiments/hover_track_v4_2_1/`, `_2_2/`, `_2_3/`: rerruns del modelo v4.2/350k para reproducibilidad de la línea de referencia (4 escenarios estándar y prueba estática `target_mode = fixed` en `_2_3` con 4355 reward y 1811 steps medios — el agente v4.2 todavía sirve como hover puro).
+- `PROJECT_HISTORY.md`: registro de esta comparativa auxiliar.
+
+---
+
+## [Fecha: 2026-04-28] - Diseño y Filosofía del Entrenamiento v7 (Survival-First desde Cero)
+
+### Motivación
+Tras consolidar `hover_track_v6_fixed/100k` como mejor punto de operación histórico (33 % supervivencia, 19 % visibilidad, 1605 steps en `medium`) y confirmar mediante la auditoría de v4.3 que el colapso por encima de los 200k pasos es **estructural al currículo Fase C** (no específico de una versión), se decidió abandonar el enfoque de fine-tuning sobre checkpoints heredados y diseñar una nueva línea desde cero (`v7`).
+
+El usuario aportó tres restricciones de diseño explícitas que orientaron toda la arquitectura:
+1. **El dron debe iniciar SIEMPRE con la esfera visible** (entera o parcial). La búsqueda en espiral es responsabilidad de un controlador separado (`models/spiral_follow`) en despliegue, no del entrenamiento.
+2. **El detector HSV funciona correctamente**: tras revisión de vídeos, el problema observado en v6_fixed/200k (`visibility_pct = 0%`) no es de percepción sino de comportamiento — *"cuando aparece la esfera, el dron se desestabiliza y la vuelve a perder"*.
+3. Política de pérdida de visibilidad durante el episodio: penalización `-0.05/paso` con truncación a los 2 segundos (opción c estricta).
+
+### Diagnóstico Consolidado de Errores Sistémicos (v3.1 → v6_fixed)
+
+| # | Error | Manifestación | Estado |
+|---|---|---|---|
+| 1 | Spawn Altitude Bug | v6 buggy (0 % supervivencia, 15 pasos) | Corregido en `panda3d_quadrotor_env.py::_randomize_target()` |
+| 2 | Teleportation Bug | v5/v6 (frame 1 desincronizado de `previous_state`) | Corregido vía sync de `state ↔ previous_state` |
+| 3 | Catastrophic Forgetting > 200k | v3.1@400k, v4.1@350k, v4.3@400k, v6_fixed@300k–400k | **Estructural**: currículo Fase C (periferia FOV extrema + velocidad alta) rompe la política base. Jerk asciende 0.03 → 0.14, episodios colapsan a 13–15 pasos |
+| 4 | Trade-off visibilidad ↔ supervivencia | v4.2/v4.3/v5 (40–56 % vis, 0 % surv) | Reward multiplicativo de centrado incentiva sacrificar el vuelo |
+| 5 | Penalización de altitud como muro continuo | v6/v6_fixed | `-1.0×error` empuja a saturar motores ante pequeñas desviaciones |
+
+### Principios de Diseño v7
+
+**Tres mitos a romper** respecto a v3 → v6:
+1. *El fine-tuning desde checkpoints antiguos arrastra vicios*. v4.1/150k contiene sesgos de jerk implícitos heredados del bug de spawn-altitude, aunque el bug se haya corregido posteriormente. Decisión: **entrenar desde cero**.
+2. *Más pasos NO es más calidad*. A partir de 200k pasos todas las versiones se degradan. Decisión: **cortar en 200k pasos** con early-stopping basado en supervivencia.
+3. *Supervivencia y tracking deben estar desacoplados*. Visibilidad como bonus aditivo gateado por estabilidad, NUNCA como multiplicador del reward total.
+
+### Arquitectura del Reward v7
+
+Reemplaza la base v3.1 dentro del wrapper. La fórmula es:
+
+```
+r_step =  r_alive
+        + α(t) · r_track     (si r_stability > 0.3 ∧ target_visible)
+        + r_invisible        (si target NO visible)
+        + r_jerk
+```
+
+Componentes y motivación:
+- **`r_alive = +0.1`** (denso): la supervivencia debe ser una recompensa positiva por defecto, no un castigo por su ausencia. Independiente de visibilidad y centrado.
+- **`r_track = α(t) · r_centering`**: el reward de centrado del entorno base (max ≈ 4.0) se atenúa por una α schedule que crece linealmente de 0.2 → 1.0 entre los pasos 0 y 80 000. La gate `r_stability > 0.3` garantiza que solo cuenta cuando el dron está volando estable; sacrificar estabilidad por centrado deja de ser rentable.
+- **`r_invisible = -0.05/paso`** (gradiente suave hacia recuperación): si pierde la esfera, paga un coste pequeño por step pero no es catastrófico. Combinado con la truncación dura a 200 pasos sin esfera (2 s) implementa la "opción c" pactada con el usuario.
+- **`r_jerk = -0.4 · ||Δaction||²`**: penalización cuadrática de cambios bruscos de acción. Diseñado para que `jerk ≤ 0.04` sea el rango estable.
+
+### Currículo de 4 Fases con Transiciones Suaves
+
+Reemplaza el `B 20–65 / C 65–100` de v6_fixed por:
+
+| Fase | Pasos | Spawn jitter XY | Target speed | Objetivo |
+|---|---|---|---|---|
+| **A — Hover puro** | 0–40k (20 %) | 0.10 m fijo | 0.0 (estático) | Aprender a no caerse |
+| **B — Static FOV** | 40k–80k (20 %) | 0.30 m fijo | 0.0 (estático) | Tolerar offset radial sin movimiento |
+| **C — Lemniscata lenta** | 80k–140k (30 %) | 0.30 m | 0.05 → 0.10 m/s | Iniciar tracking dinámico |
+| **D — Lemniscata media** | 140k–200k (30 %) | 0.30 m | 0.10 → 0.20 m/s | Consolidar tracking en velocidad operativa |
+
+**No se llega a la Fase C extrema del currículo FOV** (radio = `fov + target_radius`). Esa es la causa confirmada del catastrophic forgetting según la auditoría de v4.3 / v6_fixed.
+
+**Transiciones suaves**: en el último 20 % de cada fase, los parámetros se samplean con probabilidad creciente desde la siguiente fase (no salto seco entre fronteras).
+
+### Spawn Determinista con Visibilidad Garantizada por Geometría
+
+Sustituye el `random + re-roll` por construcción geométrica:
+- Target generado primero en `(target_x, target_y, 0)` según fase del currículo (lemniscata).
+- Dron spawneado en `(target_x + ΔX, target_y + ΔY, hover_height + ΔZ)` con:
+  - `ΔX, ΔY ∼ U(-0.3, +0.3)` m (variabilidad lateral)
+  - `ΔZ ∼ U(-0.1, +0.1)` m (jitter de altitud)
+  - Yaw inicial `∼ U(-15°, +15°)` vía cuaternión
+- **Garantía empírica de visibilidad** en frame 0: la esfera está dentro del FOV por construcción.
+
+### Soft-termination en Lugar de Muros Continuos
+
+- **Altitud**: si `|z - hover_height| > 1.5 m` durante 100 pasos consecutivos (1 s) → `terminated=True` con penalización `-5`.
+- **Invisibilidad**: si `target_visible = False` durante 200 pasos consecutivos (2 s) → `truncated=True` con penalización `-2`.
+- **Físicas divergentes**: `try/except RuntimeError` sobre `solve_ivp` → terminación limpia con `-10`. Una sola divergencia no aborta 4 h de GPU.
+
+### Hiperparámetros SAC
+
+- **Algoritmo**: SAC desde cero (sin `SAC.load`), red `[256, 128]`, `policy_params = 244 364`.
+- **`learning_rate = 1e-4`** (vs. `3e-4` en v6_fixed): conservador, v6_fixed mostró que LR alto acelera el colapso.
+- **`target_entropy = -2.0`** (vs. default `-dim(action) = -4`): reduce la exploración predeterminada de SAC para evitar saturación de motores en early training. Identificado como predictor temprano del colapso en v4.3 y v6_fixed.
+- **`batch_size = 256`, `buffer_size = 500 000`, `tau = 0.005`, `gamma = 0.99`**.
+- **`ent_coef = "auto"`** con `target_entropy = -2.0`.
+- **`train_freq = 1`, `gradient_steps = 1`**.
+
+### Memoria Visual Implícita: VecFrameStack(3)
+
+Apila los últimos 3 frames del observation space (19-D → **57-D**) usando `stable_baselines3.common.vec_env.VecFrameStack`. Da al agente memoria de los últimos 30 ms sin necesidad de añadir variables explícitas como "última posición vista" — opción descartada porque solapaba con el rol del controlador de espiral en despliegue.
+
+### Callback de "Mejor Modelo" por Lex Order de Métricas Reales
+
+Reemplaza el `EvalCallback` estándar de SB3 (que guarda mejor por reward, métrica desconectada de supervivencia según v4.3@200k que tenía R=398 pero 0/3 supervivencias). El nuevo callback:
+- Evalúa cada 10 000 pasos × 5 episodios con seeds **fijas** `[1000, 1001, 1002, 1003, 1004]`.
+- Bloquea `target_speed_range = (0.10, 0.10)` durante eval (régimen "medium").
+- Mantiene un frame-stack manual de 57-D que replica `VecFrameStack` (oldest first, newest last).
+- Compara contra el mejor histórico por orden lexicográfico **`(survival, visibility, -jerk)`**.
+- Al guardar `best_model.zip`, fuerza `vec_env.reset()` y reasigna `model._last_obs` para que SAC re-cachee la observación tras la mutación del entorno por la eval (sino, contamina el siguiente rollout).
+
+### Early-Stop en Regresiones Sostenidas
+
+Si la supervivencia cae más de 20 pp respecto al mejor durante **2 evaluaciones consecutivas**, el callback detiene el entrenamiento y promueve el último `best_model.zip`. Diseñado para detectar el catastrophic forgetting en cuanto se manifieste, no esperar a que se complete el colapso.
+
+### Limitación de Vídeos durante Entrenamiento
+
+`BoundedVideoCallback` planifica **exactamente 10 grabaciones** distribuidas linealmente en los 200k pasos (triggers en `[20k, 40k, …, 200k]`). Captura un episodio completo cuando el siguiente `done=True` cruza un trigger. Conservador en disco y CPU.
+
+### Archivos Generados
+- `scripts/train_hover_track_v7.py`: implementación completa de la arquitectura descrita.
+  - Clase `HoverTrackV7Wrapper(Panda3DQuadrotorEnv)`: spawn determinista + reward v7 + soft-termination.
+  - Clase `CurriculumV7Callback`: 4 fases con interpolación + α schedule + log CSV.
+  - Clase `BestSurvivalEvalCallback`: eval con frame-stack manual + lex order.
+  - Clase `BoundedVideoCallback`: grabación limitada a 10 vídeos.
+  - Clase `HoverTrackV7App(ShowBase)`: setup de Panda3D + entrenamiento.
+- `PROJECT_HISTORY.md`: documentación de filosofía y diseño v7.
+
+---
+
+## [Fecha: 2026-04-28] - v7 Run #1: Bug de Observación con VecFrameStack y Re-sync del Vec_env
+
+### Síntoma
+Primera ejecución de `train_hover_track_v7.py`. El entrenamiento progresa normalmente hasta el primer evaluación a los 10 000 pasos, donde aborta con:
+
+```
+ValueError: Error: Unexpected observation shape (19,) for Box environment,
+please use (57,) or (n_env, 57) for the observation shape.
+```
+
+### Diagnóstico
+Dos bugs en `BestSurvivalEvalCallback._evaluate()`:
+
+1. **Frame-stack inconsistente**: `VecFrameStack(n_stack=3)` apila la observación a 57-D durante el entrenamiento (3 × 19), pero la eval llama a `raw_env.reset()` y `raw_env.step()` directamente, que devuelven los 19-D originales sin apilar. El modelo entrenado sobre 57-D rechaza la entrada de 19-D.
+
+2. **Cache `_last_obs` corrompido tras la eval**: aunque la eval no hubiera fallado, el callback dejaba al `raw_env` en un estado a medias del último episodio de eval mientras `SAC.collect_rollouts` mantenía su `_last_obs` cacheado de antes. Al reanudar el entrenamiento, la próxima acción se elegiría desde una observación stale aplicada al estado real post-eval → corrupción silenciosa de varios pasos hasta que el siguiente `done` resincronizara.
+
+### Solución Aplicada
+Edits sobre `train_hover_track_v7.py`:
+
+1. **Frame-stack manual durante eval**: inicializar `stack = np.tile(obs, n_stack).astype(np.float32)` (57-D, repitiendo la primera obs 3 veces). En cada step desplazar a la izquierda y añadir el nuevo `obs` al final, replicando la convención de `VecFrameStack` (más reciente al final).
+
+2. **Re-sync del vec_env post-eval**: añadir al final de `_evaluate()`:
+   ```python
+   new_obs = self.training_vec_env.reset()
+   model._last_obs = new_obs
+   model._last_episode_starts = np.ones((self.training_vec_env.num_envs,), dtype=bool)
+   ```
+   Forzar un reset del vec_env y reasignar el cache de SAC garantiza que el próximo rollout parte de una observación coherente con el estado real del entorno.
+
+3. **Ampliar la firma del constructor**: pasar `training_vec_env` y `n_stack` al callback desde `run_training()`.
+
+### Resultado
+El entrenamiento continúa sin abortar más allá del primer eval. Bug resuelto.
+
+### Archivos Afectados
+- `scripts/train_hover_track_v7.py`: parche en `BestSurvivalEvalCallback._evaluate()` y su constructor.
+
+---
+
+## [Fecha: 2026-04-28] - v7 Run #2: Catastrophic Transition en Phase A → B (Detenido al 28 %)
+
+### Configuración
+Mismo script v7 con los fixes del Run #1 aplicados. Ejecución completa hasta el ~28 % (paso 55 759 / 200 000) antes de detener manualmente.
+
+### Trayectoria de Métricas
+
+**Phase A (0–40k pasos)**: aprendizaje aparentemente sano.
+- Reward: `-118 → -8` (descenso monotónico tras la fase exploratoria).
+- Jerk en eval: `0.008 → 0.012` (acciones suaves, `target_entropy=-2.0` y `w_jerk=0.4` funcionando).
+- Episodios: ~150 pasos/ep al final de Phase A.
+
+**Evaluaciones (siempre `survival=0`, `visibility=0%`)**:
+
+| Eval | Steps | Termination dominante |
+|:---:|:---:|:---|
+| 10k | 200 | `lost_target` (200 pasos invisibles consecutivos) |
+| 20k | 164 | mezcla |
+| 30k | 126 | probable `altitude_drift` |
+| 40k | 127 | mezcla |
+| 50k | 54 | flip/colisión inmediata |
+
+**Phase A → B transition (paso 40k)**: colapso catastrófico.
+- Step 40k: 271 episodios totales (~148 pasos/ep)
+- Step 50k: 349 episodios (78 ep en 10k pasos → ~78 pasos/ep)
+- Step 55k: **668 episodios** (319 ep en 5k pasos → **~16 pasos/ep**)
+
+**Reward "mejorando" en Phase B es engañoso**: pasa de `-3.48` a `~0.0` no por mejor política sino por episodios más cortos:
+- 16 pasos × `r_alive=0.1` = `+1.6`
+- 16 pasos × jerk pequeño ≈ `0`
+- 16 pasos × invisible_term penalización por episodio = `-2`
+- Total: `R ≈ 0` (mejor que un episodio largo con jerk acumulado)
+
+### Diagnóstico Causa Raíz
+
+**Tres causas en orden de impacto**:
+
+1. **`w_alive = 0.1` demasiado bajo**: la diferencia entre un episodio de 3000 pasos (R = +300) y uno de 16 pasos (R = +1.6) es marginal. No hay incentivo fuerte para preferir vivir mucho. El agente encuentra el local optimum "morir rápido" porque los costes acumulados son menores que los reward acumulados de episodios largos con tracking imperfecto.
+
+2. **Salto de jitter Phase A → B abrupto** (`jitter_xy: 0.10 → 0.30` de un step a otro). La interpolación suave codificada solo afectaba a `speed_range`, no a la ampliación de jitter. El agente, entrenado con offset máximo de 0.10 m, no puede corregir el salto a 0.30 m y entra en muerte rápida.
+
+3. **Phase A demasiado corta** (40k pasos = 20 %). La política no consolidó hover robusto antes de afrontar el aumento de dificultad.
+
+### Comparación con v6_fixed
+
+El patrón replica el catastrophic transition observado en v6_fixed @ 150k (entrada 2026-04-27): degradación de reward, episodios colapsando, jerk creciendo. Confirma que **el efecto no es exclusivo de fine-tuning** — también ocurre en entrenamiento desde cero si el currículo introduce saltos de dificultad mayores que la capacidad de adaptación del agente.
+
+### Decisión: Parar y Aplicar Fixes
+
+Continuar otras ~1.5 h con la trayectoria actual significaba quemar GPU sin información útil. Se interrumpió manualmente al 28 % y se decidió crear un script v7.1 con tres ajustes mínimos.
+
+### Archivos Generados
+- `models/hover_track_v7/`: checkpoints intermedios y `best_model.zip` (eval@10k) — útiles solo como baseline anti-comparación.
+- Telemetría de la ejecución analizada en chat.
+
+---
+
+## [Fecha: 2026-04-28] - v7.1: Tres Fixes para el Catastrophic Transition
+
+### Motivación
+Aplicar correcciones quirúrgicas a las tres causas raíz del colapso de v7 sin redefinir la arquitectura.
+
+### Cambios sobre v7 (todos en `scripts/train_hover_track_v7_1.py`)
+
+**Fix 1 — `w_alive: 0.10 → 0.50`** (5×):
+- Un episodio de 3000 pasos pasa de `R ≈ +300` a `R ≈ +1500`.
+- Un episodio de 16 pasos pasa de `R ≈ +1.6` a `R ≈ +8`.
+- El gap se amplía de `188×` a `188×` (mismo ratio) pero el valor absoluto del incentivo a vivir crece: el agente percibe la diferencia con más fuerza en términos de Q-value learning.
+
+**Fix 2 — Rampa de `jitter_xy` dentro de Phase A (no salto en B)**:
+- Implementación: nuevas constantes `PHASE_A_JITTER_START = 0.05`, `PHASE_A_JITTER_END = 0.30`.
+- En `_pick_phase_params()`, dentro de Phase A, `jitter_xy = 0.05 + p_in × (0.30 - 0.05)` donde `p_in ∈ [0, 1]` es el progreso interno de la fase.
+- Phase B en adelante mantiene `jitter_xy = 0.30` constante.
+- Sin saltos discretos: el agente experimenta el rango completo de offsets durante toda Phase A.
+
+**Fix 3 — Currículo recalibrado**:
+- v7: `A 0–20% / B 20–40% / C 40–70% / D 70–100%`
+- v7.1: **`A 0–35% / B 35–50% / C 50–75% / D 75–100%`**
+- Phase A casi se duplica (40k → 70k pasos) para consolidar hover bajo todo el rango de jitter antes de introducir movimiento del target.
+- Las fases B/C/D se contraen proporcionalmente.
+
+**Fix opcional 4 — `invisible_term_steps: 200 → 60`** (2.0 s → 0.6 s):
+- Reduce la penalización acumulada por pérdida de lock dentro de un episodio.
+- 60 pasos × 0.05 = -3 vs los 200 × 0.05 = -10 anteriores.
+- Pensado como anti-incentivo para "morir rápido para evitar acumulación de invisibilidad".
+
+### Configuración del Run
+- **Parámetros consolidados**: `w_alive=0.5`, `w_jerk=0.4`, `w_invisible=0.05`, `stab_gate=0.3`, `α schedule 0.2 → 1.0 en 80k pasos`, jitter A=0.05→0.30 / B,C,D=0.30, `invisible_term_steps=60`, `invisible_term_penalty=2.0`, `alt_soft_limit=1.5 m`, `alt_soft_steps=100`.
+- **Output**: `./models/hover_track_v7_1/`.
+- Resto de hiperparámetros idénticos a v7.
+
+### Resultado del Run (detenido al 21 %)
+
+**Trayectoria de reward en entrenamiento**: progreso sostenido y estable.
+
+| Step | Reward | α | Episodios | Pasos/ep aprox |
+|:---:|---:|:---:|:---:|:---:|
+| 0 | -38 | 0.20 | 1 | — |
+| 10k | -21 | 0.30 | 174 | ~57 |
+| 20k | +2.7 | 0.40 | 340 | ~60 |
+| 30k | +15.7 | 0.50 | 506 | ~60 |
+| 40k | +19.0 | 0.60 | 672 | ~60 |
+| 42k | +18.7 | 0.63 | 717 | ~44 |
+
+- Reward POSITIVO desde el paso ~18k (v7 nunca lo consiguió de forma productiva).
+- No hay collapse en Phase A→B (todavía no se alcanzó la frontera, situada en step 70k).
+- Jerk en eval: 0.008 → 0.024 (ligero ascenso pero no alarmante).
+
+**Pero dos problemas serios**:
+
+#### Problema 1 — Pipeline de Evaluación Roto
+
+Los 4 evaluaciones reportan `steps=60` exacto, `vis=0%`, `survival=0`. **El número 60 = `invisible_term_steps`**. Cada episodio de eval termina por la truncación de invisibilidad.
+
+**Causa**: durante el entrenamiento, `Panda3DRenderCallback._on_step()` llama a `taskMgr.step()` cada paso, lo que actualiza los buffers de la cámara de Panda3D. Pero en `BestSurvivalEvalCallback._evaluate()` se llama directamente a `raw_env.step()` sin pasar por ese callback → los buffers de cámara no se refrescan → el detector de centroide ve frames stales o vacíos → `target_visible=False` siempre → 60 pasos seguidos de invisibilidad → truncación → `vis = 0%`.
+
+**Consecuencias laterales**:
+- El callback de "best by survival" guardó el modelo del eval @ 10k como "mejor" (los demás están todos empatados a 0 %). No hay rotación de mejores.
+- El early-stop por regresión nunca dispara: `survival - 0.20 < 0` es imposible cuando todos los `survival = 0`.
+
+**Importante**: el reward de **entrenamiento** sí incluye señal de tracking real (la mejora de R en 30k pasos no es explicable solo con `r_alive`). Durante el entrenamiento, `Panda3DRenderCallback` sí está activo y el rendering funciona. Solo el pipeline de eval está aislado.
+
+#### Problema 2 — Episodios de Entrenamiento Estancados en ~60 Pasos
+
+Cuenta de episodios revela un nuevo local optimum:
+- step 10k: 174 ep (~57 pasos/ep)
+- step 30k: 506 ep (~60 pasos/ep)
+- step 40k: 672 ep (~60 pasos/ep)
+
+**Todo el entrenamiento ocurre en ventanas de ~60 pasos** = exactamente la longitud de la truncación por invisibilidad. El agente encontró un nuevo local optimum:
+
+> "Vivo 60 pasos, recibo +30 de `r_alive`, pierdo la esfera, me trunco con penalización -2. Reset. Repito."
+
+Cálculo del reward del bucle:
+- `r_alive = 60 × 0.5 = +30`
+- `r_invisible = 60 × -0.05 = -3`
+- `r_jerk ≈ -6` (jerk moderado)
+- truncación = `-2`
+- **Total ≈ +19** ✓ Coincide con el plateau observado.
+
+El problema raíz: **la penalización de truncación (-2) es demasiado pequeña** comparada con el reward acumulado en esos 60 pasos. El agente trata la truncación como "reset gratis" en lugar de algo a evitar.
+
+### Por qué v7.1 mejoró frente a v7 pero sigue estancado
+
+| Métrica | v7 | v7.1 |
+|---|---|---|
+| Plateau de reward | `+0` (con eps de 16 pasos) | `+19` (con eps de 60 pasos) |
+| Episodios pasos | 16 (catastrophic) | 60 (truncation loop) |
+| Diagnóstico | "morir rápido" óptimo | "ciclo de truncación" óptimo |
+| Síntoma común | Local optimum en R = 0 / +19 sin tracking real |
+
+`w_alive=0.5` movió el plateau de `+0` a `+19` pero el techo está limitado por la facilidad de explotar la truncación como reset gratis.
+
+### Decisión: Parar y Aplicar Dos Fixes Más
+
+Continuar 2 h con eval roto (sin información válida sobre supervivencia/visibilidad/jerk) y agente atascado en local optimum no produce progreso útil. Se interrumpe al 21 %.
+
+### Archivos Generados
+- `models/hover_track_v7_1/`: checkpoints intermedios y `best_model.zip` correspondiente al eval @ 10k (no significativo dado el bug de eval).
+- `scripts/train_hover_track_v7_1.py`: script con los tres fixes aplicados sobre v7.
+- Telemetría completa analizada en chat.
+
+---
+
+## [Fecha: 2026-04-28] - v7.2: Fix del Eval Pipeline + Romper el Bucle de Truncación
+
+### Motivación
+Aplicar dos correcciones mínimas que ataquen directamente las causas observadas en v7.1: el render de Panda3D durante eval y el local optimum del bucle de 60 pasos.
+
+### Cambios sobre v7.1 (todos en `scripts/train_hover_track_v7_2.py`)
+
+**Fix A — Driver de Panda3D dentro del eval loop**:
+En `BestSurvivalEvalCallback._evaluate()`, después de cada `raw_env.reset()` y de cada `raw_env.step()`, llamar a `panda3d_app.taskMgr.step()`:
+
+```python
+panda_app = getattr(self.raw_env, 'panda3d_app', None)
+...
+obs, _ = self.raw_env.reset(seed=seed)
+if panda_app is not None:
+    panda_app.taskMgr.step()
+...
+while not done and step < max_steps:
+    act, _ = model.predict(stack, deterministic=True)
+    obs, _r, term, trunc, info = self.raw_env.step(act)
+    if panda_app is not None:
+        panda_app.taskMgr.step()
+    ...
+```
+
+Replica explícitamente el comportamiento de `Panda3DRenderCallback._on_step()` durante el entrenamiento. Los buffers de cámara se refrescan correctamente y el detector de centroide ve los frames actuales.
+
+**Fix B — Penalización de truncación: 2.0 → 20.0** (10×):
+Recalcula el cost-benefit del bucle de truncación:
+- Antes: 60-step ep = `+30 - 3 - 6 - 2 = +19` (rentable)
+- Ahora: 60-step ep = `+30 - 3 - 6 - 20 = +1` (apenas neutro)
+
+Un episodio que mantenga visibilidad durante 200+ pasos sigue siendo claramente preferible (`R > +90`). El bucle "die quickly" deja de ser un atractor.
+
+**Fix C — `invisible_term_steps: 60 → 100`** (0.6 s → 1.0 s):
+Pequeño aumento para compensar la mayor penalización: el agente tiene un poco más de margen para recuperar el lock antes de que dispare la truncación dura. Cambio menor pero coherente con la nueva economía del reward.
+
+### Configuración del Run
+- **Parámetros consolidados v7.2**: `w_alive=0.5`, `w_jerk=0.4`, `w_invisible=0.05`, `stab_gate=0.3`, α schedule 0.2 → 1.0 en 80k, jitter A=0.05→0.30 / B,C,D=0.30, **`invisible_term_steps=100`, `invisible_term_penalty=20.0`**, `alt_soft_limit=1.5 m`, `alt_soft_steps=100`.
+- **Output**: `./models/hover_track_v7_2/`.
+- Resto de hiperparámetros idénticos a v7.1.
+
+### Discusión Adicional: Penalización Creciente con el Tiempo
+
+Durante el debate de los fixes, se planteó si tendría sentido escalar la penalización de truncación con el progreso del entrenamiento (rampa 2 → 20) o con el conteo de truncaciones por episodio. Conclusiones documentadas:
+
+- **Rampa temporal de penalty**: descartada. Prolonga el régimen "barato" durante 80k pasos, durante los cuales el agente aprende exactamente la lección equivocada (truncación es gratis). Cuando la penalización suba, ya tendrá una política consolidada en torno al bucle, y costará romperla. Además, cambiar el reward durante entrenamiento rompe la estacionariedad que SAC necesita para que la Q-function converja.
+
+- **Penalty creciente con el conteo de truncaciones**: descartada. Rompe la propiedad de Markov del MDP — la penalización dejaría de depender solo del estado-acción y pasaría a depender del histórico. SAC asume MDP estacionario; este patrón provocaría inestabilidades en el critic.
+
+- **Alternativa razonable para v7.3 si v7.2 no funciona**: penalización **proporcional a la duración del episodio en el momento de la truncación**, p.ej. `penalty = -20 × clip(steps_until_truncation / 200, 0.2, 1.0)`. Es estacionario en sentido Markoviano (depende solo del estado actual del episodio, no del histórico de episodios) y tiene la lógica de "perdona el primer fallo, no el quinto".
+
+### Archivos Generados
+- `scripts/train_hover_track_v7_2.py`: script con los dos fixes aplicados.
+- `PROJECT_HISTORY.md`: documentación detallada de la trilogía v7 / v7.1 / v7.2.
+
+### Estado del Run
+**Pendiente de ejecución**. Se ha consolidado la batería de cambios; el usuario lanzará el run completo de 200k pasos a continuación.
+
+---
+
+## [Fecha: 2026-04-28] - Diseño y Lanzamiento de Hover Track v7 (Reward Survival-First, From Scratch)
+
+### Motivación
+Tras el análisis exhaustivo de la línea v3.1 → v6_fixed (entradas previas del 2026-04-26 y 2026-04-27) se identificaron tres causas raíz **independientes** del fallo recurrente "0% supervivencia con buen tracking":
+
+1. **Spawn Altitude Bug** (v5/v6 buggy): dron iniciado a 14 cm del suelo. **Corregido** en `src/envs/panda3d_quadrotor_env.py::_randomize_target()` (target en `z=0.0` en modo `camera_down`).
+2. **Trade-off visibilidad↔supervivencia** (v4.2/v4.3/v5 limpios): la recompensa multiplicativa de centrado (gate `r_stability × r_centering`) incentivaba "sacrificar el vuelo por seguir el objetivo". Aunque v6 introdujo bonus aditivos (estabilidad +2.0, jerk −1.2, altitud −1.0), seguía operando sobre la base v3.1 dominada por tracking.
+3. **Catastrophic Forgetting >200k** (todas las versiones): el currículo Fase C (radio FOV extremo + velocidad alta) reproducía el patrón "jerk asciende a 0.10–0.14, episodios colapsan a 13–15 pasos" en v3.1@400k, v4.1@350k, v4.3@400k y v6_fixed@300k–400k. Confirmado como **estructural al currículo**, no específico de una versión.
+
+El mejor punto de operación previo (`v6_fixed/100k`: 33% supervivencia, 19% visibilidad, 1605 pasos en `medium`) seguía lejos del objetivo de 100% supervivencia. Se determinó que ningún fine-tune adicional sobre la línea actual conseguiría el salto cualitativo necesario, y se planteó un **reset completo** con una arquitectura de recompensa rediseñada y currículo más conservador.
+
+### Restricción de diseño aportada por el usuario
+El dron **debe iniciar siempre con la esfera dentro del FOV** (total o parcialmente). El controlador de búsqueda en espiral (`models/spiral_follow/`) cubre el caso "objetivo perdido" en despliegue; durante el entrenamiento de hover-track no se debe spawnear con la esfera fuera de cámara, ya que sin estímulo visual el agente no aprende seguimiento.
+
+### Errores corregidos en la propuesta inicial (revisión iterativa)
+La propuesta v7 inicial fue auditada y se identificaron 5 errores antes de implementar:
+
+1. **`α=0` en Fase A mata el encoder visual** → corregido: α arranca en 0.20 (no 0) y sube linealmente a 1.0 hasta el step 80k. La política recibe gradiente sobre el centrado desde el primer step, solo cambia el peso relativo.
+2. **`r_alive=+1.0` permitía reward hacking** ("hover puro" sin mirar la esfera) → corregido: `r_alive=+0.1` (denso pero pequeño) y `r_track` con cap +2.0 a α=1. Supervivencia necesaria pero no suficiente.
+3. **Spawn aleatorio "dentro del FOV" no garantizaba visibilidad inicial** → corregido: spawn determinista del dron sobre el target con jitter `±0.3 m XY`, `±0.1 m Z`, `±15° yaw`. Visibilidad por construcción geométrica, sin re-rolls.
+4. **Soft-term de altitud `|z−h|>1.0 m durante 50 pasos`** demasiado restrictivo → corregido: umbral `1.5 m` durante `100 pasos` (1 s).
+5. **`EvalCallback` guardando "best" por reward** → corregido: callback custom que ordena lexicográficamente por **(survival, visibility, −jerk)**. Reward y supervivencia están descorrelacionados (v4.3@200k tenía `reward=398` y `survival=0/3`).
+
+### Riesgos contemplados antes del lanzamiento (mitigaciones añadidas)
+- **Bug del detector HSV en `eval_v6_fixed_200k`** investigado: revisando los vídeos se confirmó que el detector funciona correctamente; la baja visibilidad se debía a que la esfera estaba la mayor parte del tiempo fuera de cámara y, cuando aparecía, el dron se desestabilizaba y la volvía a perder. **Esto valida directamente el diseño v7**: el problema no es percepción, es respuesta motriz brusca al estímulo visual.
+- **Política de pérdida de visibilidad durante episodio**: implementada **opción (c) estricta** — penalización `−0.05/paso` mientras `target_visible=False` + truncado del episodio a los 200 pasos consecutivos sin esfera (`2.0 s`).
+- **Memoria de "última posición vista"**: descartada. Argumentos: (a) duplica el rol del controlador de espiral en despliegue, (b) crea "crutch problem" (latencia de re-engagement), (c) añade dims al obs sin beneficio, (d) en 2 s la información ya está obsoleta. Sustituida por `VecFrameStack(n_stack=3)` para memoria visual implícita de los últimos 30 ms.
+- **Catastrophic forgetting**: se elimina la Fase C extrema (radio = `fov + target_radius`). Velocidad máxima limitada a 0.20 m/s (vs. 0.25 en v6_fixed, 0.40 en v4 original). Currículo termina en 200k pasos estrictos (early-stop documentado).
+- **Saturación motora por SAC**: `target_entropy = −2.0` (mitad del default `−4`) para reducir exploración bruta inicial.
+- **Crash de `solve_ivp` por motores saturados**: `try/except RuntimeError` en `step()` del wrapper que termina el episodio limpiamente con `−10` reward y `info['physics_diverged']`.
+- **Reproducibilidad de eval**: 5 seeds determinísticos `[1000, 1001, 1002, 1003, 1004]`. Métrica de rollback es **media de 2 evals consecutivos**, no una sola.
+
+### Implementaciones (Hover Track v7)
+
+#### 1. Wrapper `HoverTrackV7Wrapper` (`scripts/train_hover_track_v7.py`)
+- **Spawn determinista** en `reset()`: dron a `(target_xy + jitter_xy, target_z + hover_height + jitter_z)` con yaw aleatorio en `±15°`. Sustituye al spawn polar aleatorio del `MovingTargetV4Wrapper`. Visibilidad t=0 garantizada por geometría.
+- **Reward v7 reemplaza completamente la base v3.1** (no es shaping aditivo):
+  ```
+  r = r_alive + α(t)·r_track + r_invisible + r_jerk
+      r_alive       = +0.1                            (denso)
+      r_track       = α · r_centering   si r_stab > 0.3 y target_visible
+                    = 0                  en otro caso
+      r_invisible   = -0.05              si not target_visible
+      r_jerk        = -0.4 · ||Δa||²
+  ```
+- **Soft-term de altitud**: contador `_alt_violation_streak` que termina con `−5` reward si `|z − (target_z + hover_height)| > 1.5 m` durante 100 pasos.
+- **Truncado por pérdida de visibilidad**: contador `_invisible_streak` que trunca con `−2` reward si `target_visible=False` durante 200 pasos consecutivos.
+- **Robustez física**: `try/except RuntimeError` sobre `super().step()` para divergencias de `solve_ivp`.
+
+#### 2. Currículo `CurriculumV7Callback` — 4 fases con interpolación suave
+| Fase | Pasos | Speed | Jitter XY |
+|:---:|:---:|:---:|:---:|
+| **A** | 0 – 40k (0–20%) | 0.0 (estático) | ±0.10 m |
+| **B** | 40k – 80k (20–40%) | 0.0 (estático) | ±0.30 m |
+| **C** | 80k – 140k (40–70%) | 0.05 → 0.10 m/s | ±0.30 m |
+| **D** | 140k – 200k (70–100%) | 0.10 → 0.20 m/s | ±0.30 m |
+
+- **Interpolación suave**: en el último 20% de cada fase, con probabilidad creciente `p ∈ [0,1]` se sampla con los parámetros de la fase siguiente. Evita los "catastrophic transitions" observados en v6_fixed/150k (reward `+42 → −41`).
+- **α schedule independiente**: `α = 0.20 + min(t/80000, 1) × 0.80`, lineal hasta saturar a 1.0.
+- Logging CSV por episodio con 17 métricas: descomposición de reward (alive/track/invisible/jerk), visibilidad, supervivencia booleana, jerk, fase, α, motivo de terminación.
+
+#### 3. Callback de evaluación `BestSurvivalEvalCallback`
+- Eval cada **10k pasos** × **5 episodios** con seeds fijos `[1000–1004]`, `target_speed=0.10` constante.
+- **Frame-stack manual** durante eval (replica la convención de `VecFrameStack`: oldest first, newest last) para mantener observación 57-D.
+- **Best metric lexicográfico**: `(survival, visibility, −jerk)`. Salva `best_model.zip` solo si supera al mejor previo en este orden.
+- **Re-sync del vec_env post-eval**: `training_vec_env.reset()` + reasignación de `model._last_obs` y `model._last_episode_starts` para evitar corrupción del cache de SAC.
+- **Early-stop**: si la supervivencia cae > 20 pp respecto al mejor durante **2 evals consecutivos**, devuelve `False` y aborta entrenamiento.
+- Log JSON acumulativo en `eval_log.json`.
+
+#### 4. Callback de vídeo `BoundedVideoCallback`
+- Máximo **10 vídeos** durante todos los 200k pasos.
+- Triggers espaciados linealmente: `[20k, 40k, 60k, 80k, 100k, 120k, 140k, 160k, 180k, 200k]`. Al cruzar un umbral, se "arma" para grabar el siguiente episodio completo.
+- Reutiliza el `EpisodeRecorder` existente (FPV + bird-view + overlay).
+
+#### 5. SAC desde cero (sin fine-tune)
+- `SAC(MlpPolicy, [256, 128], lr=1e-4, batch_size=256, buffer=500k, tau=0.005, gamma=0.99, ent_coef='auto', target_entropy=-2.0)`.
+- `VecFrameStack(DummyVecEnv([env]), n_stack=3)` → observación efectiva 57-D (3 × 19).
+- 244 364 parámetros de política.
+
+### Bug detectado y corregido en la primera ejecución
+
+**Síntoma**: en el primer eval (paso 10k) el entrenamiento abortó con
+```
+ValueError: Unexpected observation shape (19,) for Box environment,
+please use (57,) or (n_env, 57) for the observation shape.
+```
+
+**Causa raíz** (dos bugs en `BestSurvivalEvalCallback._evaluate()`):
+1. **Frame-stack inconsistente**: la eval llamaba a `raw_env.reset()`/`step()` directamente, que devuelven los 19-D originales. El modelo, entrenado sobre 57-D apilados por `VecFrameStack`, rechazaba esa entrada al hacer `model.predict(obs)`.
+2. **Cache `_last_obs` corrompido**: incluso resolviendo el shape, la eval mutaba el estado del `raw_env` (`base_env.state`, `target_pos`, contadores) mientras `SAC.collect_rollouts` mantenía su `self._last_obs` cacheado de antes. Al reanudar el entrenamiento, la siguiente acción se elegía desde una observación stale y se aplicaba al estado real post-eval → corrupción silenciosa de los siguientes pasos.
+
+**Fix aplicado** en `scripts/train_hover_track_v7.py`:
+- Frame-stack manual en `_evaluate()`: `stack = np.tile(obs, n_stack)` inicial, en cada step `stack = concat([stack[obs_dim:], new_obs])`.
+- `training_vec_env.reset()` post-eval + reasignación de `model._last_obs` y `model._last_episode_starts = ones((n_env,), bool)` para que SAC parta de una observación consistente con el estado real del entorno.
+- El callback ahora recibe `training_vec_env` y `n_stack` por constructor.
+
+### Análisis de los primeros ~10k pasos (pre-fix, pre-eval)
+
+| Métrica | Valor observado | Lectura |
+|---|---|---|
+| Episodios | ~80 en 10k pasos | Longitud media ≈ 125 pasos (1.25 s) |
+| Reward medio | −76 → −129 (deriva descendente) | Esperable en exploración SAC, no es colapso |
+| Phase / α / speed | A / 0.20 → 0.30 / 0.00 | Currículo y α schedule correctos |
+| FPS | 28 estable | OK |
+
+**Descomposición estimada** del reward ≈ −100 en 125 pasos:
+- `r_alive` ≈ +0.1 × 125 = **+12.5** (techo si vive todo el episodio).
+- `alt_term_penalty` = **−5** (al disparar soft-term una vez).
+- `r_jerk` ≈ −0.4 × ||Δa||² × 125 ≈ **−95** (con ||Δa||² ≈ 1.9 medio).
+
+Conclusión: el coste de jerk domina la señal durante exploración pura. Coherente con SAC ruidoso pre-`learning_starts`. La política aleatoria deriva fuera del cono de altitud (>1.5 m) y dispara el soft-term tras ~100 pasos, explicando los episodios cortos.
+
+**Veredicto**: comportamiento normal de SAC en los primeros 10k pasos de un entreno desde cero. El verdadero termómetro será el primer eval a 10k (ahora ya operativo tras el fix). Si cualquier semilla sobrevive (≥1/5), la política está aprendiendo.
+
+### Criterios de éxito y métricas a vigilar
+
+**Objetivo final** (eval con `tests/test_spiral_track.py`, 10 episodios × 60 s, 4 escenarios):
+- `survival_rate ≥ 0.95` en `slow_easy` y `medium`.
+- `survival_rate ≥ 0.70` en `fast_hard` y `recovery`.
+- `visibility ≥ 0.30` (no es el cuello de botella).
+- `jerk ≤ 0.04`.
+- **Delta de jerk antes/después de un re-enganche < 0.02** (el dron no se desestabiliza al ver la esfera, criterio derivado del insight del usuario sobre los vídeos v6_fixed).
+
+**Señales tempranas durante entrenamiento** (para detectar problemas pronto):
+1. Reward debe **dejar de caer** entre 15k–30k y empezar a subir. Si sigue bajando linealmente, `w_jerk=0.4` está dominando la señal — mitigación: bajar a `0.2` y reanudar.
+2. Longitud de episodio debe crecer de ~125 → ≥500 pasos hacia 30k.
+3. Eval @ 10k: `survival = 0/5` y `visibility < 5%` aceptables. `visibility = 0%` exacto en las 5 → revisar detector.
+4. Si a 50k el reward sigue ≤ −80 y `survival = 0/5` sostenido en 3 evals consecutivos: ajustar pesos.
+
+### Configuración consolidada del entrenamiento v7
+
+| Aspecto | Valor |
+|:---|:---|
+| Algoritmo | SAC, `MlpPolicy [256, 128]`, 244 364 params |
+| Punto de partida | **Desde cero** (sin fine-tune) |
+| Total timesteps | **200 000** estrictos |
+| Hyperparámetros | `lr=1e-4`, `batch=256`, `buffer=500k`, `tau=0.005`, `gamma=0.99`, `target_entropy=-2.0`, `ent_coef='auto'` |
+| Observación | 19-D × 3 frame-stack = **57-D** |
+| Reward | `+0.1 alive` + `α(t)·r_centering` (gate `r_stab>0.3`) − `0.05` invisible − `0.4·||Δa||²` |
+| α schedule | `0.20 → 1.00` lineal en 80k pasos |
+| Spawn | Determinista sobre target, jitter `±0.3 m XY`, `±0.1 m Z`, `±15° yaw` |
+| Soft-term altitud | `|Δz| > 1.5 m` durante 100 pasos → `−5` |
+| Truncado invisibilidad | 200 pasos sin esfera → `−2` (opción c, 2 s) |
+| Currículo | A[0–20%]·B[20–40%]·C[40–70%]·D[70–100%], speed cap 0.20 m/s, interpolación 20% |
+| Eval | Cada 10k × 5 eps con seeds `[1000–1004]`, `speed=0.10` fijo |
+| Best metric | `(survival, visibility, −jerk)` lexicográfico |
+| Early-stop | survival cae >20 pp del mejor × 2 evals consecutivos |
+| Vídeos | Máximo **10** durante todo el entrenamiento, espaciados cada ~20k |
+| Output | `models/hover_track_v7/` (best, final, checkpoints, log, eval_log, recordings) |
+
+### Archivos Afectados / Generados
+- `scripts/train_hover_track_v7.py` (Nuevo, 1095 líneas):
+  - `HoverTrackV7Wrapper` con spawn determinista y reward survival-first que reemplaza la base v3.1.
+  - `CurriculumV7Callback` con 4 fases + α schedule + interpolación suave + logging CSV de 17 métricas.
+  - `BestSurvivalEvalCallback` con frame-stack manual, re-sync del vec_env y early-stop por regresión.
+  - `BoundedVideoCallback` con presupuesto fijo de 10 grabaciones.
+  - `Panda3DRenderCallback` para integración con `taskMgr.step()`.
+  - SAC construido desde cero con `target_entropy=-2.0` y `VecFrameStack(n_stack=3)`.
+- `PROJECT_HISTORY.md`: registro de esta entrada (diseño, errores corregidos en revisión, riesgos mitigados, bug del primer lanzamiento, análisis de los primeros 10k pasos, criterios de éxito).
+
+### Decisiones documentadas para iteraciones futuras (post-v7)
+1. **Si v7 alcanza survival ≥ 0.70 en `medium` pero < 0.95**: extender Fase D ligeramente (manteniendo speed cap 0.20) y aumentar `n_eval_episodes` a 10 para reducir varianza.
+2. **Si v7 alcanza survival objetivo pero visibility < 0.30**: subir `α_max` a 1.5 en una v7.1 fine-tune corto (50k pasos) desde el best v7.
+3. **Si v7 falla por catastrophic forgetting > 100k**: introducir EWC (Elastic Weight Consolidation) o KL-anchor sobre la política @ 80k para regularizar pesos en transiciones de fase.
+4. **Si los vídeos muestran "shock visual" persistente** (jerk delta > 0.02 al re-enganchar): incorporar `n_stack=5` o reducir `α_warmup_steps` a 50k para que el agente aprenda antes a modular su respuesta motriz al estímulo visual.
+

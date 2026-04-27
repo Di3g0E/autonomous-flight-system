@@ -45,6 +45,8 @@ experiments/**/*.mp4
 experiments/**/*.avi
 experiments/**/videos/
 models/**/**.mp4
+**/**.mp4
+**/**.png
 
 # modelos de experiments que no son best_model.zip o depth_model.zip
 *_steps.zip

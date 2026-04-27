@@ -63,6 +63,94 @@ from src.utils.episode_recorder import EpisodeRecorder
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Constantes y helpers para quad-view
+# ══════════════════════════════════════════════════════════════════════
+
+QV_PANEL = 480
+QV_LABEL_H = 40
+QV_SEP = 3
+
+
+def _make_panel(img_bgr, title, ps, title_color=(0, 255, 255)):
+    resized = cv2.resize(img_bgr, (ps, ps))
+    panel = np.zeros((ps + QV_LABEL_H, ps, 3), dtype=np.uint8)
+    panel[QV_LABEL_H:, :] = resized
+    cv2.putText(panel, title, (10, 28),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, title_color, 2)
+    return panel
+
+
+def _build_detection_frame(img_32_rgb, ps):
+    h, w = img_32_rgb.shape[:2]
+    UP = ps // w
+    img_bgr = cv2.cvtColor(img_32_rgb, cv2.COLOR_RGB2BGR)
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (140, 100, 100), (170, 255, 255))
+    pixel_count = int(np.sum(mask > 0))
+    frac = pixel_count / (h * w)
+    annotated = cv2.resize(img_bgr, (ps, ps), interpolation=cv2.INTER_NEAREST)
+    mask_up = cv2.resize(mask, (ps, ps), interpolation=cv2.INTER_NEAREST)
+    overlay = np.zeros_like(annotated)
+    overlay[mask_up > 0] = (0, 255, 0)
+    annotated = cv2.addWeighted(annotated, 0.7, overlay, 0.5, 0)
+    cx_img, cy_img = ps // 2, ps // 2
+    cv2.line(annotated, (cx_img-20, cy_img), (cx_img+20, cy_img), (255,255,255), 1)
+    cv2.line(annotated, (cx_img, cy_img-20), (cx_img, cy_img+20), (255,255,255), 1)
+    visible = pixel_count > 2
+    if visible:
+        ys, xs = np.where(mask > 0)
+        cent_x, cent_y = float(np.mean(xs)) * UP, float(np.mean(ys)) * UP
+        cv2.circle(annotated, (int(cent_x), int(cent_y)), 8, (0,0,255), -1)
+        cv2.circle(annotated, (int(cent_x), int(cent_y)), 8, (255,255,255), 2)
+        x_min, x_max = int(np.min(xs))*UP, int(np.max(xs)+1)*UP
+        y_min, y_max = int(np.min(ys))*UP, int(np.max(ys)+1)*UP
+        cv2.rectangle(annotated, (x_min, y_min), (x_max, y_max), (0,255,255), 2)
+        cx_n = (np.mean(xs) - w/2) / (w/2)
+        cy_n = (np.mean(ys) - h/2) / (h/2)
+        info_text = f"cx={cx_n:+.2f} cy={cy_n:+.2f} frac={frac:.3f}"
+    else:
+        info_text = "NOT DETECTED"
+    cv2.putText(annotated, info_text, (8, ps-12),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255,0,255), 2)
+    return annotated
+
+
+def _update_ext_camera(ext_camera, drone_pos, target_pos):
+    """No-op: camera is fixed. Kept for compatibility."""
+    pass
+
+
+def _plot_altitude(times, drone_alts, target_alts, title, path):
+    import matplotlib; matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(times, drone_alts, label='Drone', color='#2196F3', linewidth=1.5)
+    ax.plot(times, target_alts, label='Target', color='#E91E63',
+            linewidth=1.5, linestyle='--')
+    ax.set_xlabel('Time (s)'); ax.set_ylabel('Altitude (m)')
+    ax.set_title(title); ax.legend(); ax.grid(True, alpha=0.3)
+    fig.tight_layout(); fig.savefig(str(path), dpi=150); plt.close(fig)
+
+
+def _plot_all_altitudes(all_data, path):
+    import matplotlib; matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(figsize=(12, 6))
+    n = len(all_data)
+    cm_d, cm_t = plt.cm.Blues, plt.cm.Reds
+    for i, (label, times, d_a, t_a) in enumerate(all_data):
+        f = 0.4 + 0.6 * i / max(n-1, 1)
+        ax.plot(times, d_a, color=cm_d(f), lw=1.2, alpha=0.8,
+                label=f'Drone {label}')
+        ax.plot(times, t_a, color=cm_t(f), lw=1.2, alpha=0.8,
+                linestyle='--', label=f'Target {label}')
+    ax.set_xlabel('Time (s)'); ax.set_ylabel('Altitude (m)')
+    ax.set_title('Altitude — All Episodes')
+    ax.legend(fontsize=6, ncol=2); ax.grid(True, alpha=0.3)
+    fig.tight_layout(); fig.savefig(str(path), dpi=150); plt.close(fig)
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Configuración de modelos y escenarios
 # ══════════════════════════════════════════════════════════════════════
 
@@ -298,7 +386,8 @@ def load_spiral_model(path='./models/spiral_follow/best_model.zip'):
 # ══════════════════════════════════════════════════════════════════════
 
 def run_episode(env, app, fsm, sac_model, scenario, duration_s,
-                record=False, recorder=None, ext_camera=None):
+                record=False, recorder=None, ext_camera=None,
+                quad_writer=None, fpv_camera=None, panel_size=QV_PANEL):
     """Ejecuta un episodio completo con la FSM.
 
     Devuelve un diccionario de métricas.
@@ -343,10 +432,15 @@ def run_episode(env, app, fsm, sac_model, scenario, duration_s,
     action_jerks     = []
     prev_action      = None
     terminated_early = False
+    ep_times         = []
+    ep_drone_alts    = []
+    ep_target_alts   = []
 
     # Para análisis de transiciones
     transitions      = []   # (step, 'TRACK'|'SEARCH')
     prev_fsm_state   = fsm.current_state
+    PS = panel_size
+    frame_interval   = max(1, 100 // 30)  # ~30 fps video
 
     if record and recorder:
         recorder.start_episode(0)
@@ -389,8 +483,55 @@ def run_episode(env, app, fsm, sac_model, scenario, duration_s,
                 float(np.mean(np.abs(action - prev_action))))
         prev_action = action.copy()
 
-        if record and recorder:
-            if step % 10 == 0:   # ~10 FPS a dt=0.01
+        # ── Altitude tracking ──
+        drone_pos = env.base_env.state[0:5:2]
+        target_pos = env.target_pos
+        ep_times.append(step * dt)
+        ep_drone_alts.append(float(drone_pos[2]))
+        ep_target_alts.append(float(target_pos[2]))
+
+        # ── Quad-view frame recording ──
+        if quad_writer is not None and step % frame_interval == 0:
+            fpv_32 = env._last_high_freq_image
+            if fpv_32 is not None and fpv_camera is not None and ext_camera is not None:
+                _update_ext_camera(ext_camera, drone_pos, target_pos)
+                app.graphicsEngine.renderFrame()
+                ok_f, fpv_rgba = fpv_camera.get_image()
+                ok_e, ext_rgba = ext_camera.get_image()
+                if ok_f and ok_e:
+                    raw_bgr = cv2.resize(cv2.cvtColor(fpv_rgba, cv2.COLOR_RGBA2BGR), (PS, PS))
+                    rl_bgr = cv2.resize(cv2.cvtColor(fpv_32, cv2.COLOR_RGB2BGR),
+                                        (PS, PS), interpolation=cv2.INTER_NEAREST)
+                    det = _build_detection_frame(fpv_32, PS)
+                    ext_bgr = cv2.resize(cv2.cvtColor(ext_rgba, cv2.COLOR_RGBA2BGR), (PS, PS))
+                    p1 = _make_panel(raw_bgr, "1. Raw Camera", PS)
+                    p2 = _make_panel(rl_bgr, "2. RL Input (32x32)", PS, (255,0,255))
+                    p3 = _make_panel(det, "3. HSV Detection + Centroid", PS, (0,255,0))
+                    p4 = _make_panel(ext_bgr, "4. External View", PS)
+                    ph = PS + QV_LABEL_H
+                    sv = np.full((ph, QV_SEP, 3), 255, dtype=np.uint8)
+                    sh = np.full((QV_SEP, 2*PS+QV_SEP, 3), 255, dtype=np.uint8)
+                    qf = np.vstack([np.hstack([p1, sv, p2]), sh, np.hstack([p3, sv, p4])])
+                    band = np.zeros((50, qf.shape[1], 3), np.uint8)
+                    qf = np.vstack([qf, band])
+                    y0 = qf.shape[0] - 50
+                    fnt = cv2.FONT_HERSHEY_SIMPLEX
+                    vis = vt.get('target_visible', False)
+                    vis_c = (0,255,0) if vis else (0,0,255)
+                    l1 = f"FSM={cur_fsm}  |  Step {step}  |  Spirals={fsm.n_spiral_activations}"
+                    cv2.putText(qf, l1, (10, y0+20), fnt, 0.5, (0,255,255), 1)
+                    cd_v = vt.get('centering_dist', -1)
+                    fr_v = vt.get('target_fraction', 0)
+                    l2 = (f"R={sum(rewards):.0f}  |  vis={'YES' if vis else 'NO'}"
+                          f"  cent={cd_v:.3f}  frac={fr_v:.3f}  |  "
+                          f"alt_d={drone_pos[2]:.2f}  alt_t={target_pos[2]:.2f}")
+                    cv2.putText(qf, l2, (10, y0+42), fnt, 0.45, (200,200,200), 1)
+                    cv2.circle(qf, (qf.shape[1]-25, y0+15), 10, vis_c, -1)
+                    quad_writer.write(qf)
+
+        # Legacy recorder (if still used)
+        elif record and recorder:
+            if step % 10 == 0:
                 fpv = env._last_high_freq_image
                 bird = None
                 if ext_camera is not None:
@@ -429,6 +570,9 @@ def run_episode(env, app, fsm, sac_model, scenario, duration_s,
         'mean_action_jerk':    _m(action_jerks),
         'post_handoff_cent':   fsm.post_handoff_mean_centering(),
         'n_transitions':       len(transitions),
+        '_times':             ep_times,
+        '_drone_alts':        ep_drone_alts,
+        '_target_alts':       ep_target_alts,
     }
 
 
@@ -438,23 +582,46 @@ def run_episode(env, app, fsm, sac_model, scenario, duration_s,
 
 def run_scenario(env, app, fsm, sac_model, model_label,
                  scenario_name, scenario, args, output_dir,
-                 recorder=None, ext_camera=None):
+                 recorder=None, ext_camera=None, fpv_camera=None):
     """Corre N episodios y devuelve estadísticas agregadas."""
     ep_results = []
-    did_record = False
+    PS = QV_PANEL
+    vid_dir = Path(output_dir) / 'videos' / f"{model_label}_{scenario_name}"
+    plot_dir = Path(output_dir) / 'plots' / f"{model_label}_{scenario_name}"
+    vid_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir.mkdir(parents=True, exist_ok=True)
 
     for ep in range(args.episodes):
-        record_this = (not did_record and not args.no_video
-                       and recorder is not None)
+        # Create quad-view writer for every episode
+        quad_writer = None
+        if not args.no_video and ext_camera is not None and fpv_camera is not None:
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            qw = 2 * PS + QV_SEP
+            qh = 2 * (PS + QV_LABEL_H) + QV_SEP + 50
+            vpath = vid_dir / f"ep_{ep+1:03d}_quad_view.mp4"
+            quad_writer = cv2.VideoWriter(str(vpath), fourcc, 30, (qw, qh))
+
         res = run_episode(
             env, app, fsm, sac_model, scenario,
             duration_s=args.duration,
-            record=record_this,
+            record=False,
             recorder=recorder,
             ext_camera=ext_camera,
+            quad_writer=quad_writer,
+            fpv_camera=fpv_camera,
+            panel_size=PS,
         )
-        if record_this:
-            did_record = True
+
+        if quad_writer is not None:
+            quad_writer.release()
+
+        # Per-episode altitude plot
+        if res['_times']:
+            title = f"Altitude — {model_label} / {scenario_name} / Ep {ep+1}"
+            _plot_altitude(res['_times'], res['_drone_alts'],
+                           res['_target_alts'], title,
+                           plot_dir / f"ep_{ep+1:03d}_altitude.png")
+
         res['episode'] = ep + 1
         res['model'] = model_label
         res['scenario'] = scenario_name
@@ -638,11 +805,11 @@ class SpiralTrackTestApp(ShowBase):
         self.fpv_camera.cam.setHpr(0, -90, 0)
         self.fpv_camera.buffer.setActive(1)
 
-        # Cámara externa (vista de pájaro / aérea)
+        # Cámara externa — fija y lejana para ver siempre dron + esfera
         self.ext_camera = opencv_camera(self, 'ext_cam', 1)
         self.ext_camera.cam.reparentTo(self.render)
-        self.ext_camera.cam.setPos(0, -8, 14)
-        self.ext_camera.cam.lookAt(0, 0, 4)
+        self.ext_camera.cam.setPos(0, -18, 25)
+        self.ext_camera.cam.lookAt(0, 0, 2)
         self.ext_camera.buffer.setActive(1)
 
         # Entorno: target móvil, reward v3.1, cámara abajo
@@ -764,11 +931,6 @@ class SpiralTrackTestApp(ShowBase):
                         resolution=(480, 360),
                     )
 
-                # Posicionar cámara externa según offset del escenario
-                cam_dist = max(6.0, scenario['init_offset'] * 2.5)
-                self.ext_camera.cam.setPos(
-                    -cam_dist * 0.5, -cam_dist * 0.8, cam_dist * 0.7)
-                self.ext_camera.cam.lookAt(0, 0, 2)
 
                 episode_results = run_scenario(
                     env=self.env,
@@ -783,29 +945,38 @@ class SpiralTrackTestApp(ShowBase):
                     recorder=recorder,
                     ext_camera=(self.ext_camera
                                 if not self.args.no_video else None),
+                    fpv_camera=(self.fpv_camera
+                                if not self.args.no_video else None),
                 )
 
                 all_results.extend(episode_results)
                 all_episode_rows.extend(episode_results)
 
-                if recorder is not None:
-                    try:
-                        tl = recorder.compile_timelapse(
-                            f"{model_label}_{scenario_name}.mp4",
-                            max_frames_per_ep=300)
-                        if tl:
-                            print(f"  Vídeo: {tl}")
-                    except Exception as e:
-                        print(f"  [WARN] No se pudo compilar vídeo: {e}")
+        # ── Combined altitude plot ──
+        all_alt_data = []
+        for r in all_results:
+            if r.get('_times'):
+                label = f"{r['model']}/{r['scenario']}/Ep{r['episode']}"
+                all_alt_data.append(
+                    (label, r['_times'], r['_drone_alts'], r['_target_alts']))
+        if all_alt_data:
+            plot_dir = self.output_dir / 'plots'
+            plot_dir.mkdir(parents=True, exist_ok=True)
+            _plot_all_altitudes(all_alt_data,
+                                plot_dir / 'all_altitudes.png')
+            print(f"\n  Combined altitude plot: {plot_dir / 'all_altitudes.png'}")
 
-        # ── Guardar CSV ──
+        # ── Guardar CSV (excluir listas internas) ──
         if all_episode_rows:
             csv_path = self.output_dir / 'results.csv'
+            csv_keys = [k for k in all_episode_rows[0].keys()
+                        if not k.startswith('_')]
             with open(csv_path, 'w', newline='') as f:
-                w = csv.DictWriter(f, fieldnames=all_episode_rows[0].keys())
+                w = csv.DictWriter(f, fieldnames=csv_keys,
+                                   extrasaction='ignore')
                 w.writeheader()
                 w.writerows(all_episode_rows)
-            print(f"\n  CSV: {csv_path}")
+            print(f"  CSV: {csv_path}")
 
         # ── Guardar JSON ──
         json_path = self.output_dir / 'summary.json'

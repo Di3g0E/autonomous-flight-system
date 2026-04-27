@@ -1,0 +1,9 @@
+[
+  {
+    "timestep": 10000,
+    "survival": 0.0,
+    "visibility": 0.0,
+    "jerk": 0.009452979642935472,
+    "mean_steps": 100.0
+  }
+]
