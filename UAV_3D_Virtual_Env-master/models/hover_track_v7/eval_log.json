@@ -2,43 +2,78 @@
   {
     "timestep": 10000,
     "survival": 0.0,
-    "visibility": 0.0,
-    "jerk": 0.00775797963142395,
-    "mean_steps": 200.0
+    "visibility": 0.8227587975200376,
+    "jerk": 0.0070638134661029335,
+    "mean_steps": 218.2
   },
   {
     "timestep": 20000,
     "survival": 0.0,
-    "visibility": 0.0,
-    "jerk": 0.010051621937079137,
-    "mean_steps": 164.2
+    "visibility": 0.9742857142857144,
+    "jerk": 0.015164460960692447,
+    "mean_steps": 142.2
   },
   {
     "timestep": 30000,
     "survival": 0.0,
-    "visibility": 0.0,
-    "jerk": 0.00975560029781458,
-    "mean_steps": 126.4
+    "visibility": 1.0,
+    "jerk": 0.014045516535578109,
+    "mean_steps": 109.6
   },
   {
     "timestep": 40000,
     "survival": 0.0,
-    "visibility": 0.0,
-    "jerk": 0.011942114783804945,
-    "mean_steps": 127.4
+    "visibility": 1.0,
+    "jerk": 0.01703824192409578,
+    "mean_steps": 109.2
   },
   {
     "timestep": 50000,
     "survival": 0.0,
-    "visibility": 0.0,
-    "jerk": 0.0453793339373588,
-    "mean_steps": 53.8
+    "visibility": 0.9699248120300752,
+    "jerk": 0.020831018294490085,
+    "mean_steps": 111.4
   },
   {
     "timestep": 60000,
     "survival": 0.0,
-    "visibility": 0.0,
-    "jerk": 0.046917278411842525,
-    "mean_steps": 15.8
+    "visibility": 1.0,
+    "jerk": 0.01871644509139067,
+    "mean_steps": 114.8
+  },
+  {
+    "timestep": 70000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.02038180057435823,
+    "mean_steps": 118.6
+  },
+  {
+    "timestep": 80000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.019649076580163634,
+    "mean_steps": 122.8
+  },
+  {
+    "timestep": 90000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.022958595390739033,
+    "mean_steps": 124.0
+  },
+  {
+    "timestep": 100000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.022941853794415906,
+    "mean_steps": 126.4
+  },
+  {
+    "timestep": 110000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.02422898849090611,
+    "mean_steps": 131.2
   }
 ]

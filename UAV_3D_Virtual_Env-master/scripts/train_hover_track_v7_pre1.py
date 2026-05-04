@@ -1,162 +1,37 @@
 #!/usr/bin/env python
 """
-Hover-track v7.5 — asymmetric altitude soft-termination.
+Hover-track v7.1 — survival-first reward (post-mortem fixes from v7).
 
-v7.4 succeeded at suppressing motor saturation (action_mag 0.7 -> 0.43)
-and made eval@10k extraordinary (vis=100%, jerk=0.0045, steps=203). But
-eval@20k REGRESSED (vis=93%, jerk=0.016, steps=147) because the α schedule
-amplified r_track 33% while the alive-growth bonus did not yet dominate.
+The v7 run collapsed at the Phase A → B transition (~step 40k):
+  • Episodes shrunk from ~150 to ~16 steps in 15k steps.
+  • Reward drifted toward 0 not by improvement but by *episode brevity*:
+    short episodes accumulated less invisibility / jerk cost than long
+    ones — a textbook reward-hacking local optimum.
+  • Visibility stayed at 0% across all evaluations because the policy
+    never learnt to maintain visual lock; it learned to die early.
 
-The mechanism: r_track at α=1.0 pays ~2.3x more than r_alive for episodes
-of 150 steps. The agent therefore learns to descend toward the sphere
-(maximising r_scale within r_track), eventually crossing
-`hover_height - 1.5 = -0.106 m` and triggering the symmetric alt_soft_term
-after 100 consecutive low-altitude steps. With episodes capped at ~150
-steps, alive_growth never gets a chance to dominate (it would need
-episodes of ~700 steps to do so).
+v7.1 targeted fixes:
+  1. **w_alive = 0.50** (was 0.10). Long-vs-short episode reward gap
+     widens 5×, eliminating the "die early" local optimum.
+     A 3000-step episode ⇒ +1500; a 16-step episode ⇒ +8.
+  2. **Phase A jitter ramp**: jitter_xy now grows 0.05 → 0.30
+     gradually inside Phase A instead of jumping at the B boundary.
+     Phase B onward keeps 0.30 fixed.
+  3. **Phase A extended 20% → 35%** (40k → 70k steps). The other
+     phases compress proportionally:
+       A [0–35%)   B [35–50%)   C [50–75%)   D [75–100%]
+     This gives the agent more time to consolidate hover under the
+     full jitter range before the target starts moving.
+  4. **invisible_term_steps 200 → 60** (2.0 s → 0.6 s). Reduces the
+     accumulated invisibility penalty per episode, so a brief loss
+     of lock is no longer a stronger signal to die than to recover.
 
-v7.5 targeted fix:
-
-  **Asymmetric altitude soft-termination**: replace the single
-  `alt_soft_limit` (±1.5 m) with two thresholds:
-
-    alt_soft_lower = 0.5 m   # drone may dip only to z = hover_h - 0.5
-    alt_soft_upper = 1.5 m   # drone may climb to   z = hover_h + 1.5
-
-  Drone's spawn at 2.0 m starts well within the upper margin. Descending
-  to anything below 0.894 m starts the violation streak; 100 such steps
-  trigger termination with the existing -5 penalty. Ascending up to
-  2.894 m is freely allowed (only triggers if the drone shoots way up).
-
-  This is the minimum-surgery fix: it does not touch the reward
-  structure, the curriculum, the spawn, the action-magnitude penalty,
-  or the alive-growth schedule — only constrains the failure mode that
-  the v7.4 data identified as dominant.
-
-Inherits all v7.4 design: deterministic spawn at 2.0 m, w_alive_base=0.5,
-w_alive_growth=0.005/step, w_amag=0.05, α-ramped tracking weight,
-4-phase curriculum, VecFrameStack(3), lex-best by (survival, vis, -jerk),
-early-stop on regression, max 10 videos.
+Inherits all v7 design choices: deterministic spawn above target,
+α-ramped tracking weight, soft altitude termination, VecFrameStack(3),
+lex best by (survival, visibility, -jerk), early-stop on regression.
 
 Usage:
-    python scripts/train_hover_track_v7_5.py --no-display
-
-─────────────────────────────────────────────────────────────────────
-v7.4 — survival-incentivising reward + motor-saturation cap.
-
-v7.3 fixed the visibility bug and produced steady reward growth (-49 -> +438
-in 80k steps) with vis=100% in evals. But survival stayed at 0 and episodes
-plateaued at ~120 steps. Diagnosis from `models/hover_track_v7_3/training_log.csv`:
-
-  1. **Motor saturation**: `action_mag` grew from 0.51 to 0.75 over training.
-     The agent satisfies the jerk penalty (smooth Δaction) by holding large
-     sustained thrusts, generating angular momentum that violates the base
-     env's `BB_ANG = π/2` bound at ~120 steps regardless of policy quality.
-     Smoother control (jerk 0.18) terminates as fast as chaotic (jerk 0.66).
-
-  2. **Free natural termination**: 99% of terminations are `'natural'`
-     (base env bbox), which carries 0 penalty in v7.3. Per-second reward
-     is identical for episodes of 130 steps (3.1/s) and hypothetical 3000
-     steps (3.0/s) — there is NO incentive to survive longer.
-
-  3. **Bootstrap horizon**: SAC has only seen ~130-step episodes, so its
-     Q-function is calibrated to that horizon. Without explicit shaping,
-     the agent cannot bootstrap value beyond what it experienced.
-
-v7.4 targeted fixes:
-
-  A. **Growing alive bonus**: r_alive(t) = w_alive_base + w_alive_growth·t
-     (default 0.5 + 0.005·t). At step 100 the agent earns 1.0/step, at step
-     500 it earns 3.0/step, at step 3000 it earns 15.5/step. Total alive
-     reward grows quadratically with episode length, making long episodes
-     dramatically more valuable. Solves causes 2 and 3 simultaneously.
-
-  B. **Action magnitude penalty**: r_amag = -w_amag · mean(action²)
-     (default 0.05). A sustained action_mag of 0.7 costs 0.024/step;
-     small in short episodes (-3 over 130 steps) but punishing over
-     long horizons (-73 over 3000 steps). Pushes the policy toward small
-     actions when the agent commits to long episodes — solves cause 1.
-
-  C. **Spawn at 2.0 m above target** (was 1.394 m). At 2.0 m the sphere
-     occupies ~12% of the 32×32 FOV (vs 27% at 1.394 m), closer to
-     `ideal_fraction = 0.25`, and the drone has more angular margin
-     before BB_ANG fires when correcting horizontal offsets. We do NOT
-     touch `hover_height = 1.394` (still used as the "ideal_z" reference
-     for alt_soft_term and the env's r_scale calibration); only the spawn
-     altitude is bumped. The agent will naturally settle toward whatever
-     altitude maximises tracking, but starts further from the failure
-     boundary.
-
-Inherits all v7.3 design: deterministic spawn above target, α-ramped
-tracking weight, 4-phase curriculum, soft-termination, VecFrameStack(3),
-lex-best by (survival, visibility, -jerk), early-stop on regression,
-max 10 videos.
-
-Usage:
-    python scripts/train_hover_track_v7_4.py --no-display
-
-─────────────────────────────────────────────────────────────────────
-v7.3 — root-cause fix: read the nested `visual_tracking` info.
-
-v7.0–v7.2 were ALL trained on a degenerate MDP because the wrapper read
-`target_visible`, `r_centering` and `r_stability` from the top level of
-the info dict, where they are NEVER set. The base env's
-`_compute_v3_1_reward()` creates a LOCAL info dict and the parent
-`step()` stores it under `info['visual_tracking']`, not at the top level.
-
-The result was:
-  • `info.get('target_visible', False)` returned None -> False every step.
-  • `r_track = 0` for all 200 000 steps of v7.2 (and the previous runs).
-  • The agent learnt to hover blindfolded, never engaging visual signal.
-  • CSV reported `visibility_pct = 0` and `r_track_sum = 0` for 2 656
-    episodes across phases A/B/C/D — definitive proof of the bug.
-
-The fix is one line per call site: read from `info['visual_tracking']`
-instead of the top-level dict. The detector, camera buffers, HSV
-thresholds and env flags are all correct (confirmed by
-`scripts/debug_visibility.py`: strict mask returns 130–280 magenta
-pixels at all tested altitudes; `_detect_target_in_image()` returns
-`vis=1.0` directly, but `info['target_visible']` is `None` after step).
-
-Inherits all v7.2 design: deterministic spawn, w_alive=0.5, α-ramp,
-4-phase curriculum, soft-termination, VecFrameStack(3), lex-best by
-(survival, visibility, -jerk), early-stop on regression, max 10 videos.
-
-Usage:
-    python scripts/train_hover_track_v7_3.py --no-display
-
-─────────────────────────────────────────────────────────────────────
-v7.2 — eval pipeline fix + truncation-loop break.
-
-v7.1 plateaued at reward ~+19 with episodes stuck at exactly 60 steps.
-Diagnosis:
-  1. **Eval pipeline broken**: Panda3D's task manager is stepped by
-     `Panda3DRenderCallback` during training but NOT during the eval
-     callback. Camera buffers went stale, the centroid detector saw
-     empty frames and returned `target_visible=False` always — so every
-     eval reported vis=0% / surv=0 / steps=60 (= invisible_term_steps).
-  2. **60-step truncation local optimum**: with w_alive=0.5,
-     invisible_term_steps=60, invisible_term_penalty=2, a single
-     truncation cycle nets ≈ +19 (alive 30 − invisible 3 − jerk 6 − 2).
-     The agent settled there and never explored long episodes.
-
-v7.2 targeted fixes:
-  A. **Drive Panda3D inside `_evaluate()`**: call
-     `panda3d_app.taskMgr.step()` after each env step (and after each
-     reset) so camera buffers, centroid detector and visibility flag
-     behave the same way they do during training.
-  B. **Truncation penalty 2 → 20**: a 60-step truncation cycle now
-     scores ≈ +1 instead of ≈ +19; the "die quickly" basin disappears.
-  C. **invisible_term_steps 60 → 100** (0.6 s → 1.0 s): a bit more
-     room to recover lock before the (now expensive) truncation fires.
-
-Everything else inherits from v7.1: deterministic spawn above target,
-w_alive=0.5, α-ramped tracking weight, 4-phase curriculum with Phase A
-jitter ramp, soft altitude termination, VecFrameStack(3), lex best by
-(survival, visibility, -jerk), early-stop on regression.
-
-Usage:
-    python scripts/train_hover_track_v7_2.py --no-display
+    python scripts/train_hover_track_v7_1.py --no-display
 """
 
 import argparse
@@ -215,35 +90,24 @@ class HoverTrackV7Wrapper(Panda3DQuadrotorEnv):
 
     def __init__(self, *args, jitter_xy=0.30, jitter_z=0.10,
                  jitter_yaw_deg=15.0,
-                 spawn_height=2.0,
                  alpha_min=0.2, alpha_max=1.0, alpha_warmup_steps=80_000,
-                 w_jerk=0.4, w_alive_base=0.5, w_alive_growth=0.005,
-                 w_invisible=0.05, w_amag=0.05,
+                 w_jerk=0.4, w_alive=0.1, w_invisible=0.05,
                  stability_gate=0.3,
-                 alt_soft_lower=0.5, alt_soft_upper=1.5,
-                 alt_soft_steps=100,
+                 alt_soft_limit=1.5, alt_soft_steps=100,
                  alt_term_penalty=5.0,
-                 invisible_term_steps=100, invisible_term_penalty=20.0,
+                 invisible_term_steps=200, invisible_term_penalty=2.0,
                  **kwargs):
         super().__init__(*args, **kwargs)
 
-        # Spawn jitter and altitude
-        # v7.4: spawn_height decoupled from hover_height. Drone is dropped
-        # at this altitude above the target; hover_height is still used as
-        # the "ideal_z" reference for alt_soft_term and the env's r_scale.
+        # Spawn jitter
         self.jitter_xy = jitter_xy
         self.jitter_z = jitter_z
         self.jitter_yaw_rad = np.deg2rad(jitter_yaw_deg)
-        self.spawn_height = spawn_height
 
-        # Reward weights (v7.4: alive becomes a linear function of step count;
-        # action magnitude penalty added on top of jerk to suppress motor
-        # saturation that violates the base env's BB_ANG bound).
-        self.w_alive_base = w_alive_base
-        self.w_alive_growth = w_alive_growth
+        # Reward weights
+        self.w_alive = w_alive
         self.w_invisible = w_invisible
         self.w_jerk = w_jerk
-        self.w_amag = w_amag
         self.stability_gate = stability_gate
 
         # α schedule (controlled externally by callback)
@@ -252,11 +116,8 @@ class HoverTrackV7Wrapper(Panda3DQuadrotorEnv):
         self.alpha_warmup_steps = alpha_warmup_steps
         self.current_alpha = alpha_min
 
-        # Soft termination thresholds (v7.5: asymmetric — descent is much
-        # tighter than ascent, since v7.4 data showed the agent only ever
-        # violated by descending toward the magenta sphere on the ground).
-        self.alt_soft_lower = alt_soft_lower    # max metres BELOW hover_h
-        self.alt_soft_upper = alt_soft_upper    # max metres ABOVE hover_h
+        # Soft termination thresholds
+        self.alt_soft_limit = alt_soft_limit
         self.alt_soft_steps = alt_soft_steps
         self.alt_term_penalty = alt_term_penalty
         self.invisible_term_steps = invisible_term_steps
@@ -265,7 +126,6 @@ class HoverTrackV7Wrapper(Panda3DQuadrotorEnv):
         # Episode counters
         self._alt_violation_streak = 0
         self._invisible_streak = 0
-        self._episode_step = 0          # v7.4: drives growing alive bonus
         self._prev_action_v7 = None
 
         # Curriculum-controlled (set by callback)
@@ -290,11 +150,7 @@ class HoverTrackV7Wrapper(Panda3DQuadrotorEnv):
 
         state[0] = self.target_pos[0] + dx
         state[2] = self.target_pos[1] + dy
-        # v7.4: spawn at `spawn_height` (default 2.0 m) instead of
-        # hover_height (1.394 m). Gives more angular margin before BB_ANG
-        # fires when the agent corrects horizontal offsets, and brings the
-        # apparent sphere fraction closer to ideal_fraction = 0.25.
-        state[4] = self.target_pos[2] + self.spawn_height + dz
+        state[4] = self.target_pos[2] + self.hover_height + dz
 
         # Small velocity perturbation (not curriculum-scaled — keep it bounded)
         state[1] = float(np.random.uniform(-0.05, 0.05))
@@ -324,7 +180,6 @@ class HoverTrackV7Wrapper(Panda3DQuadrotorEnv):
         # Reset episode counters
         self._alt_violation_streak = 0
         self._invisible_streak = 0
-        self._episode_step = 0           # v7.4: drives growing alive bonus
         self._prev_action_v7 = None
         return obs, info
 
@@ -341,19 +196,11 @@ class HoverTrackV7Wrapper(Panda3DQuadrotorEnv):
             return obs, -10.0, True, False, info
 
         # ── v7 reward (replaces base) ──
-        # v7.3 fix: visibility/centering/stability live under
-        # info['visual_tracking'], NOT at the top level of info.
-        vt = info.get('visual_tracking', {}) or {}
-        r_stab = float(vt.get('r_stability', 0.0))
-        r_centering = float(vt.get('r_centering', 0.0))
-        target_visible = bool(vt.get('target_visible', False))
+        r_stab = float(info.get('r_stability', 0.0))
+        r_centering = float(info.get('r_centering', 0.0))
+        target_visible = bool(info.get('target_visible', False))
 
-        # v7.4: alive bonus grows linearly with steps lived in this episode.
-        # Total alive reward across an episode is quadratic in length, so the
-        # value of long episodes dominates the value of short ones.
-        self._episode_step += 1
-        r_alive = (self.w_alive_base
-                   + self.w_alive_growth * self._episode_step)
+        r_alive = self.w_alive
 
         if r_stab > self.stability_gate and target_visible:
             r_track = self.current_alpha * r_centering
@@ -370,29 +217,19 @@ class HoverTrackV7Wrapper(Panda3DQuadrotorEnv):
             r_jerk = 0.0
         self._prev_action_v7 = np.asarray(action, dtype=np.float32).copy()
 
-        # v7.4: explicit penalty on action MAGNITUDE (not just jerk).
-        # Suppresses the "sustained high-thrust, low-jerk" loophole that v7.3
-        # exploited (action_mag drifted to 0.75 with jerk=0.18, generating
-        # angular momentum that violated BB_ANG at ~120 steps).
-        amag_sq = float(np.mean(np.asarray(action, dtype=np.float32) ** 2))
-        r_amag = -self.w_amag * amag_sq
+        reward = r_alive + r_track + r_invisible + r_jerk
 
-        reward = r_alive + r_track + r_invisible + r_jerk + r_amag
-
-        # ── Soft altitude termination (v7.5: asymmetric) ──
+        # ── Soft altitude termination ──
         drone_z = float(self.base_env.state[4])
         ideal_z = float(self.target_pos[2]) + self.hover_height
-        delta_z = drone_z - ideal_z
-        if delta_z < -self.alt_soft_lower or delta_z > self.alt_soft_upper:
+        if abs(drone_z - ideal_z) > self.alt_soft_limit:
             self._alt_violation_streak += 1
         else:
             self._alt_violation_streak = 0
         if self._alt_violation_streak >= self.alt_soft_steps:
             terminated = True
             reward -= self.alt_term_penalty
-            # Tag the side that triggered, useful for diagnostic CSV.
-            info['v7_term_reason'] = (
-                'altitude_low' if delta_z < 0 else 'altitude_high')
+            info['v7_term_reason'] = 'altitude_drift'
 
         # ── Visibility-loss truncation (2 s) ──
         if not target_visible:
@@ -409,10 +246,7 @@ class HoverTrackV7Wrapper(Panda3DQuadrotorEnv):
         info['v7_track'] = r_track
         info['v7_invisible'] = r_invisible
         info['v7_jerk'] = r_jerk
-        info['v7_amag'] = r_amag
-        info['v7_amag_sq'] = amag_sq
         info['v7_alpha'] = self.current_alpha
-        info['v7_step_in_ep'] = self._episode_step
         info['v7_alt_streak'] = self._alt_violation_streak
         info['v7_invis_streak'] = self._invisible_streak
 
@@ -457,7 +291,6 @@ class CurriculumV7Callback(BaseCallback):
         'visibility_pct', 'survived',
         'mean_action_mag', 'mean_action_jerk',
         'r_alive_sum', 'r_track_sum', 'r_invis_sum', 'r_jerk_sum',
-        'r_amag_sum',
         'phase', 'alpha', 'target_speed', 'jitter_xy',
         'term_reason',
     ]
@@ -509,7 +342,6 @@ class CurriculumV7Callback(BaseCallback):
         self._ep_track = 0.0
         self._ep_invis = 0.0
         self._ep_jerk = 0.0
-        self._ep_amag = 0.0
         self._ep_term_reason = ''
         self._prev_action = None
 
@@ -592,16 +424,13 @@ class CurriculumV7Callback(BaseCallback):
         self._ep_reward += float(rewards[0])
         self._ep_steps += 1
 
-        # v7.3 fix: read from nested visual_tracking dict
-        vt = info.get('visual_tracking', {}) or {}
-        if vt.get('target_visible', False):
+        if info.get('target_visible', False):
             self._ep_visible += 1
 
         self._ep_alive += float(info.get('v7_alive', 0.0))
         self._ep_track += float(info.get('v7_track', 0.0))
         self._ep_invis += float(info.get('v7_invisible', 0.0))
         self._ep_jerk += float(info.get('v7_jerk', 0.0))
-        self._ep_amag += float(info.get('v7_amag', 0.0))
         if info.get('v7_term_reason'):
             self._ep_term_reason = info['v7_term_reason']
 
@@ -638,7 +467,6 @@ class CurriculumV7Callback(BaseCallback):
             round(self._ep_track, 3),
             round(self._ep_invis, 3),
             round(self._ep_jerk, 3),
-            round(self._ep_amag, 3),
             self.current_phase,
             round(self.raw_env.current_alpha, 3),
             round(self.raw_env.target_speed, 4),
@@ -732,17 +560,8 @@ class BestSurvivalEvalCallback(BaseCallback):
         prev_range = self.raw_env.target_speed_range
         self.raw_env.target_speed_range = (0.10, 0.10)
 
-        # v7.2: Panda3D's taskMgr is normally stepped by
-        # Panda3DRenderCallback during training. The eval loop is OUTSIDE
-        # that callback, so we drive it manually here — otherwise the
-        # camera buffers go stale and the centroid detector reports
-        # target_visible=False on every frame (the v7.1 bug).
-        panda_app = getattr(self.raw_env, 'panda3d_app', None)
-
         for seed in self.eval_seeds:
             obs, _ = self.raw_env.reset(seed=seed)
-            if panda_app is not None:
-                panda_app.taskMgr.step()
             obs = np.asarray(obs, dtype=np.float32)
             # Build initial frame-stack by replicating the first obs.
             # VecFrameStack convention: oldest first, newest last.
@@ -756,14 +575,10 @@ class BestSurvivalEvalCallback(BaseCallback):
             while not done and step < max_steps:
                 act, _ = model.predict(stack, deterministic=True)
                 obs, _r, term, trunc, info = self.raw_env.step(act)
-                if panda_app is not None:
-                    panda_app.taskMgr.step()
                 obs = np.asarray(obs, dtype=np.float32)
                 # Shift stack left by one frame and append new obs at the end
                 stack = np.concatenate([stack[obs_dim:], obs])
-                # v7.3 fix: read from nested visual_tracking dict
-                vt_eval = info.get('visual_tracking', {}) or {}
-                if vt_eval.get('target_visible', False):
+                if info.get('target_visible', False):
                     visible += 1
                 if prev_act is not None:
                     jerk_sum += float(np.mean(np.abs(act - prev_act)))
@@ -951,7 +766,7 @@ def parse_args():
     p.add_argument('--max-ep-steps', type=int, default=3000,
                    help="3000 steps = 30 s episode")
     p.add_argument('--lemniscate-scale', type=float, default=2.0)
-    p.add_argument('--output-dir', type=str, default='./models/hover_track_v7_5')
+    p.add_argument('--output-dir', type=str, default='./models/hover_track_v7_1')
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--no-display', action='store_true')
 
@@ -964,26 +779,11 @@ def parse_args():
     p.add_argument('--gamma', type=float, default=0.99)
 
     # v7 reward weights
-    p.add_argument('--w-alive-base', type=float, default=0.50,
-                   help="v7.4: base alive reward per step. The TOTAL "
-                        "alive reward at step t is "
-                        "(w_alive_base + w_alive_growth*t).")
-    p.add_argument('--w-alive-growth', type=float, default=0.005,
-                   help="v7.4: per-step linear growth of the alive reward. "
-                        "At step 100 -> +1.0/step, at 500 -> +3.0, at 1000 "
-                        "-> +5.5, at 3000 -> +15.5. Total alive across an "
-                        "episode is quadratic in length, so long episodes "
-                        "are dramatically more valuable than short ones — "
-                        "the explicit fix to v7.3's flat survival incentive.")
+    p.add_argument('--w-alive', type=float, default=0.50,
+                   help="v7.1: bumped 0.10 → 0.50 to kill 'die early' "
+                        "reward-hacking observed in v7.")
     p.add_argument('--w-jerk', type=float, default=0.40)
     p.add_argument('--w-invisible', type=float, default=0.05)
-    p.add_argument('--w-amag', type=float, default=0.05,
-                   help="v7.4: penalty on action MAGNITUDE squared "
-                        "(mean across the 4 motors). Suppresses the "
-                        "'sustained high thrust, low jerk' loophole that "
-                        "v7.3 exploited (action_mag drifted to 0.75 with "
-                        "jerk=0.18, generating angular momentum that "
-                        "violated BB_ANG at ~120 steps regardless of jerk).")
     p.add_argument('--stability-gate', type=float, default=0.30)
 
     # α schedule
@@ -991,42 +791,19 @@ def parse_args():
     p.add_argument('--alpha-max', type=float, default=1.00)
     p.add_argument('--alpha-warmup-steps', type=int, default=80_000)
 
-    # Spawn jitter & altitude
+    # Spawn jitter
     p.add_argument('--jitter-xy', type=float, default=0.30)
     p.add_argument('--jitter-z', type=float, default=0.10)
     p.add_argument('--jitter-yaw-deg', type=float, default=15.0)
-    p.add_argument('--spawn-height', type=float, default=2.0,
-                   help="v7.4: drone spawn altitude above the target "
-                        "(was 1.394 m in v7.3; bumped to 2.0 m for more "
-                        "angular margin and a more apparent fraction "
-                        "closer to ideal_fraction=0.25). Note: "
-                        "hover_height (used as ideal_z for alt_soft_term "
-                        "and the env's r_scale) is unchanged at 1.394 m.")
 
     # Soft termination
-    p.add_argument('--alt-soft-lower', type=float, default=0.5,
-                   help="v7.5: max metres BELOW hover_height before the "
-                        "altitude violation streak starts counting "
-                        "(default 0.5; in v7.4 this was 1.5 m, symmetric "
-                        "with the upper bound, which let the agent "
-                        "descend deep before any penalty).")
-    p.add_argument('--alt-soft-upper', type=float, default=1.5,
-                   help="v7.5: max metres ABOVE hover_height before the "
-                        "altitude violation streak starts counting "
-                        "(default 1.5; same as v7.4 — the agent has "
-                        "never violated upward).")
+    p.add_argument('--alt-soft-limit', type=float, default=1.5)
     p.add_argument('--alt-soft-steps', type=int, default=100)
-    p.add_argument('--invisible-term-steps', type=int, default=100,
+    p.add_argument('--invisible-term-steps', type=int, default=60,
                    help="Truncate episode after N consecutive steps without "
-                        "the sphere visible (v7.2: 100 = 1.0 s, was 60 in "
-                        "v7.1 — slightly more recovery margin paired with a "
-                        "much heavier truncation penalty).")
-    p.add_argument('--invisible-term-penalty', type=float, default=20.0,
-                   help="Reward penalty applied when the lost-target "
-                        "truncation fires (v7.2: 20.0, was 2.0 in v7.1 — "
-                        "kills the 'die quickly' truncation-loop local "
-                        "optimum: a 60/100-step truncation cycle now nets "
-                        "≈ +1 instead of ≈ +19).")
+                        "the sphere visible (v7.1: 60 = 0.6 s, was 200/2.0 s "
+                        "in v7 — long invisibility windows accumulated too "
+                        "much penalty and incentivised early termination).")
 
     # Eval & checkpoints
     p.add_argument('--eval-freq', type=int, default=10_000)
@@ -1112,18 +889,14 @@ class HoverTrackV7App(ShowBase):
             jitter_xy=args.jitter_xy,
             jitter_z=args.jitter_z,
             jitter_yaw_deg=args.jitter_yaw_deg,
-            spawn_height=args.spawn_height,
             alpha_min=args.alpha_min,
             alpha_max=args.alpha_max,
             alpha_warmup_steps=args.alpha_warmup_steps,
-            w_alive_base=args.w_alive_base,
-            w_alive_growth=args.w_alive_growth,
+            w_alive=args.w_alive,
             w_jerk=args.w_jerk,
             w_invisible=args.w_invisible,
-            w_amag=args.w_amag,
             stability_gate=args.stability_gate,
-            alt_soft_lower=args.alt_soft_lower,
-            alt_soft_upper=args.alt_soft_upper,
+            alt_soft_limit=args.alt_soft_limit,
             alt_soft_steps=args.alt_soft_steps,
             invisible_term_steps=args.invisible_term_steps,
         )
@@ -1157,7 +930,7 @@ class HoverTrackV7App(ShowBase):
         ep_duration = args.max_ep_steps * 0.01
 
         print("\n" + "=" * 70)
-        print("  HOVER-TRACK v7.5 — asymmetric altitude soft-term")
+        print("  HOVER-TRACK v7.1 — SAC FROM SCRATCH (v7 fixes applied)")
         print("=" * 70)
         print(f"  Hover height:      {args.hover_height} m")
         print(f"  Lemniscate scale:  {args.lemniscate_scale} m")
@@ -1170,18 +943,14 @@ class HoverTrackV7App(ShowBase):
         print(f"  Timesteps:         {args.timesteps:,}")
         print(f"  Episode steps:     {args.max_ep_steps} ({ep_duration:.0f}s)")
         print(f"  Policy params:     {total_params:,}")
-        print(f"  Reward weights:    alive_base={args.w_alive_base} "
-              f"alive_growth={args.w_alive_growth}/step "
-              f"jerk={args.w_jerk} amag={args.w_amag} "
-              f"invisible={args.w_invisible} "
+        print(f"  Reward weights:    alive={args.w_alive} "
+              f"jerk={args.w_jerk} invisible={args.w_invisible} "
               f"stab_gate={args.stability_gate}")
         print(f"  α schedule:        {args.alpha_min} → {args.alpha_max} "
               f"over {args.alpha_warmup_steps:,} steps")
-        print(f"  Spawn:             height={args.spawn_height} m  "
-              f"jitter XY±{args.jitter_xy} m  "
+        print(f"  Spawn jitter:      XY±{args.jitter_xy} m  "
               f"Z±{args.jitter_z} m  yaw±{args.jitter_yaw_deg}°")
-        print(f"  Soft alt term:     z<-{args.alt_soft_lower} m or "
-              f"z>+{args.alt_soft_upper} m (asym) for "
+        print(f"  Soft alt term:     |Δz|>{args.alt_soft_limit} m for "
               f"{args.alt_soft_steps} steps")
         print(f"  Lost-target trunc: {args.invisible_term_steps} steps "
               f"({args.invisible_term_steps/100:.1f} s)")
@@ -1260,7 +1029,7 @@ class HoverTrackV7App(ShowBase):
             'total_timesteps': args.timesteps,
             'training_time_seconds': elapsed,
             'algorithm': 'SAC',
-            'version': 'v7.5',
+            'version': 'v7.1',
             'fine_tune': False,
             'observation_dim': 19,
             'n_frame_stack': args.n_stack,
@@ -1269,14 +1038,11 @@ class HoverTrackV7App(ShowBase):
             'target_entropy': args.target_entropy,
             'max_ep_steps': args.max_ep_steps,
             'episode_duration_s': args.max_ep_steps * 0.01,
-            'reward_version': ('v7.5 (custom: growing alive + α·track + '
-                               'invisible + jerk + amag; asym alt soft-term)'),
+            'reward_version': 'v7 (custom: alive + α·track + invisible + jerk)',
             'reward_weights': {
-                'alive_base': args.w_alive_base,
-                'alive_growth_per_step': args.w_alive_growth,
+                'alive': args.w_alive,
                 'jerk': args.w_jerk,
                 'invisible': args.w_invisible,
-                'amag': args.w_amag,
                 'stability_gate': args.stability_gate,
             },
             'alpha_schedule': {
@@ -1285,15 +1051,13 @@ class HoverTrackV7App(ShowBase):
                 'warmup_steps': args.alpha_warmup_steps,
             },
             'spawn': {
-                'spawn_height_m': args.spawn_height,
                 'jitter_xy': args.jitter_xy,
                 'jitter_z': args.jitter_z,
                 'jitter_yaw_deg': args.jitter_yaw_deg,
                 'mode': 'deterministic_above_target',
             },
             'soft_termination': {
-                'altitude_lower_m': args.alt_soft_lower,
-                'altitude_upper_m': args.alt_soft_upper,
+                'altitude_limit_m': args.alt_soft_limit,
                 'altitude_streak_steps': args.alt_soft_steps,
                 'invisible_streak_steps': args.invisible_term_steps,
             },

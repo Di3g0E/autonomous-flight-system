@@ -1,0 +1,57 @@
+{
+  "total_episodes": 2656,
+  "final_mean_reward": 14.56549524,
+  "final_phase": "D",
+  "csv_path": "models\\hover_track_v7_1\\training_log.csv",
+  "total_timesteps": 200000,
+  "training_time_seconds": 7336.108087539673,
+  "algorithm": "SAC",
+  "version": "v7.1",
+  "fine_tune": false,
+  "observation_dim": 19,
+  "n_frame_stack": 3,
+  "net_arch": [
+    256,
+    128
+  ],
+  "learning_rate": 0.0001,
+  "target_entropy": -2.0,
+  "max_ep_steps": 3000,
+  "episode_duration_s": 30.0,
+  "reward_version": "v7 (custom: alive + \u03b1\u00b7track + invisible + jerk)",
+  "reward_weights": {
+    "alive": 0.5,
+    "jerk": 0.4,
+    "invisible": 0.05,
+    "stability_gate": 0.3
+  },
+  "alpha_schedule": {
+    "min": 0.2,
+    "max": 1.0,
+    "warmup_steps": 80000
+  },
+  "spawn": {
+    "jitter_xy": 0.3,
+    "jitter_z": 0.1,
+    "jitter_yaw_deg": 15.0,
+    "mode": "deterministic_above_target"
+  },
+  "soft_termination": {
+    "altitude_limit_m": 1.5,
+    "altitude_streak_steps": 100,
+    "invisible_streak_steps": 100
+  },
+  "curriculum_phases": {
+    "A": "0-35% (hover, target stationary, jit_xy ramps 0.05\u21920.30)",
+    "B": "35-50% (static FOV, target stationary, jit_xy=0.30)",
+    "C": "50-75% (lemniscate slow 0.05-0.10 m/s)",
+    "D": "75-100% (lemniscate medium 0.10-0.20 m/s)"
+  },
+  "eval": {
+    "best_survival": 0.0,
+    "best_visibility": 0.0,
+    "best_jerk": 0.009452979642935472,
+    "best_step": 10000
+  },
+  "policy_params": 244364
+}

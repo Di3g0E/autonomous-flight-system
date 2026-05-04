@@ -1,43 +1,66 @@
 #!/usr/bin/env python
 """
-Hover-track v7 — train from scratch with survival-first reward.
+Hover-track v7.3 — root-cause fix: read the nested `visual_tracking` info.
 
-Goal: 100% survival + stable visual tracking on a moving target.
+v7.0–v7.2 were ALL trained on a degenerate MDP because the wrapper read
+`target_visible`, `r_centering` and `r_stability` from the top level of
+the info dict, where they are NEVER set. The base env's
+`_compute_v3_1_reward()` creates a LOCAL info dict and the parent
+`step()` stores it under `info['visual_tracking']`, not at the top level.
 
-Design rationale (see PROJECT_HISTORY.md, 2026-04-27):
-  - v3.1 → v6_fixed all collapsed past 200k due to Phase-C (extreme FOV
-    periphery + high speed) producing catastrophic forgetting.
-  - v6_fixed/100k was the best operating point so far (33% survival,
-    19% visibility) but still far from the survival target.
-  - User insight: "the drone destabilises whenever the sphere appears" →
-    the policy reacts to visual stimuli with bursty actions because the
-    tracking reward dominated stability.
+The result was:
+  • `info.get('target_visible', False)` returned None -> False every step.
+  • `r_track = 0` for all 200 000 steps of v7.2 (and the previous runs).
+  • The agent learnt to hover blindfolded, never engaging visual signal.
+  • CSV reported `visibility_pct = 0` and `r_track_sum = 0` for 2 656
+    episodes across phases A/B/C/D — definitive proof of the bug.
 
-v7 fixes:
-  1. Train from scratch (no contaminated checkpoints).
-  2. Reward decoupled: r_alive (dense, small) + α(t)·r_track gated by
-     stability. α ramps 0.2 → 1.0 over the first 80k steps so the agent
-     learns to fly first, then to centre.
-  3. Deterministic spawn: drone is placed directly above the target with
-     bounded jitter (±0.3m XY, ±0.1m Z, ±15° yaw). Visibility at t=0 is
-     guaranteed by geometry — no random rerolls.
-  4. Soft altitude termination instead of a continuous "wall" penalty.
-  5. Visibility loss penalty (-0.05/step) and episode truncation after
-     2 s without sphere — encourages re-engagement without panic.
-  6. 4-phase curriculum capped at moderate target speed (0.20 m/s); no
-     extreme FOV periphery. Phases overlap in their last 20% to avoid
-     catastrophic transitions.
-  7. VecFrameStack(3) gives the agent implicit short-term visual memory.
-  8. Best checkpoint selected lexicographically by
-     (survival, visibility, -jerk) — never by reward (uncorrelated with
-     survival, see v4.3@200k anomaly).
-  9. Early-stop on regression: if survival drops > 20pp from best for
-     two consecutive evaluations, training stops and the best is kept.
- 10. Max 10 video recordings spread across training (one every ~20k).
+The fix is one line per call site: read from `info['visual_tracking']`
+instead of the top-level dict. The detector, camera buffers, HSV
+thresholds and env flags are all correct (confirmed by
+`scripts/debug_visibility.py`: strict mask returns 130–280 magenta
+pixels at all tested altitudes; `_detect_target_in_image()` returns
+`vis=1.0` directly, but `info['target_visible']` is `None` after step).
+
+Inherits all v7.2 design: deterministic spawn, w_alive=0.5, α-ramp,
+4-phase curriculum, soft-termination, VecFrameStack(3), lex-best by
+(survival, visibility, -jerk), early-stop on regression, max 10 videos.
 
 Usage:
-    python scripts/train_hover_track_v7.py
-    python scripts/train_hover_track_v7.py --timesteps 200000 --no-display
+    python scripts/train_hover_track_v7_3.py --no-display
+
+─────────────────────────────────────────────────────────────────────
+v7.2 — eval pipeline fix + truncation-loop break.
+
+v7.1 plateaued at reward ~+19 with episodes stuck at exactly 60 steps.
+Diagnosis:
+  1. **Eval pipeline broken**: Panda3D's task manager is stepped by
+     `Panda3DRenderCallback` during training but NOT during the eval
+     callback. Camera buffers went stale, the centroid detector saw
+     empty frames and returned `target_visible=False` always — so every
+     eval reported vis=0% / surv=0 / steps=60 (= invisible_term_steps).
+  2. **60-step truncation local optimum**: with w_alive=0.5,
+     invisible_term_steps=60, invisible_term_penalty=2, a single
+     truncation cycle nets ≈ +19 (alive 30 − invisible 3 − jerk 6 − 2).
+     The agent settled there and never explored long episodes.
+
+v7.2 targeted fixes:
+  A. **Drive Panda3D inside `_evaluate()`**: call
+     `panda3d_app.taskMgr.step()` after each env step (and after each
+     reset) so camera buffers, centroid detector and visibility flag
+     behave the same way they do during training.
+  B. **Truncation penalty 2 → 20**: a 60-step truncation cycle now
+     scores ≈ +1 instead of ≈ +19; the "die quickly" basin disappears.
+  C. **invisible_term_steps 60 → 100** (0.6 s → 1.0 s): a bit more
+     room to recover lock before the (now expensive) truncation fires.
+
+Everything else inherits from v7.1: deterministic spawn above target,
+w_alive=0.5, α-ramped tracking weight, 4-phase curriculum with Phase A
+jitter ramp, soft altitude termination, VecFrameStack(3), lex best by
+(survival, visibility, -jerk), early-stop on regression.
+
+Usage:
+    python scripts/train_hover_track_v7_2.py --no-display
 """
 
 import argparse
@@ -101,7 +124,7 @@ class HoverTrackV7Wrapper(Panda3DQuadrotorEnv):
                  stability_gate=0.3,
                  alt_soft_limit=1.5, alt_soft_steps=100,
                  alt_term_penalty=5.0,
-                 invisible_term_steps=200, invisible_term_penalty=2.0,
+                 invisible_term_steps=100, invisible_term_penalty=20.0,
                  **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -202,9 +225,12 @@ class HoverTrackV7Wrapper(Panda3DQuadrotorEnv):
             return obs, -10.0, True, False, info
 
         # ── v7 reward (replaces base) ──
-        r_stab = float(info.get('r_stability', 0.0))
-        r_centering = float(info.get('r_centering', 0.0))
-        target_visible = bool(info.get('target_visible', False))
+        # v7.3 fix: visibility/centering/stability live under
+        # info['visual_tracking'], NOT at the top level of info.
+        vt = info.get('visual_tracking', {}) or {}
+        r_stab = float(vt.get('r_stability', 0.0))
+        r_centering = float(vt.get('r_centering', 0.0))
+        target_visible = bool(vt.get('target_visible', False))
 
         r_alive = self.w_alive
 
@@ -301,12 +327,16 @@ class CurriculumV7Callback(BaseCallback):
         'term_reason',
     ]
 
+    # v7.1: Phase A extended (35%), jitter ramps inside Phase A (see picker).
     PHASES = [
-        ('A', 0.00, 0.20, (0.0, 0.0),     0.10),
-        ('B', 0.20, 0.40, (0.0, 0.0),     0.30),
-        ('C', 0.40, 0.70, (0.05, 0.10),   0.30),
-        ('D', 0.70, 1.00, (0.10, 0.20),   0.30),
+        ('A', 0.00, 0.35, (0.0, 0.0),     None),  # jitter ramp 0.05→0.30
+        ('B', 0.35, 0.50, (0.0, 0.0),     0.30),
+        ('C', 0.50, 0.75, (0.05, 0.10),   0.30),
+        ('D', 0.75, 1.00, (0.10, 0.20),   0.30),
     ]
+    # Phase A jitter ramp endpoints
+    PHASE_A_JITTER_START = 0.05
+    PHASE_A_JITTER_END = 0.30
 
     def __init__(self, raw_env, output_dir, total_timesteps,
                  alpha_min=0.2, alpha_max=1.0, alpha_warmup_steps=80_000,
@@ -356,19 +386,28 @@ class CurriculumV7Callback(BaseCallback):
         # Find current phase by progress
         for i, (name, start, end, speed_rng, jit_xy) in enumerate(self.PHASES):
             if start <= progress < end:
-                # Smooth transition: in last 20% of the phase, mix with next
                 phase_span = end - start
+                p_in = (progress - start) / phase_span  # 0 → 1 inside phase
+
+                # Phase A: jitter_xy ramps 0.05 → 0.30 across the whole phase
+                if name == 'A':
+                    jit_xy = (self.PHASE_A_JITTER_START
+                              + p_in * (self.PHASE_A_JITTER_END
+                                        - self.PHASE_A_JITTER_START))
+
+                # Smooth transition: in last 20% of the phase, mix with next
                 tail_start = end - 0.20 * phase_span
                 if (progress >= tail_start and i + 1 < len(self.PHASES)
                         and np.random.random()
                         < (progress - tail_start) / (end - tail_start)):
                     nxt = self.PHASES[i + 1]
-                    return name, nxt[3], nxt[4]  # current name, next params
-                # Within Phase C/D ramp the speed inside the phase
+                    nxt_jit = nxt[4] if nxt[4] is not None else self.PHASE_A_JITTER_END
+                    return name, nxt[3], nxt_jit  # current name, next params
+
+                # Phase C/D: ramp speed_hi inside the phase
                 if name in ('C', 'D'):
-                    p = (progress - start) / phase_span
                     lo = speed_rng[0]
-                    hi = speed_rng[0] + p * (speed_rng[1] - speed_rng[0])
+                    hi = speed_rng[0] + p_in * (speed_rng[1] - speed_rng[0])
                     return name, (lo, max(hi, lo + 1e-3)), jit_xy
                 return name, speed_rng, jit_xy
         # Past end → final phase params
@@ -417,7 +456,9 @@ class CurriculumV7Callback(BaseCallback):
         self._ep_reward += float(rewards[0])
         self._ep_steps += 1
 
-        if info.get('target_visible', False):
+        # v7.3 fix: read from nested visual_tracking dict
+        vt = info.get('visual_tracking', {}) or {}
+        if vt.get('target_visible', False):
             self._ep_visible += 1
 
         self._ep_alive += float(info.get('v7_alive', 0.0))
@@ -553,8 +594,17 @@ class BestSurvivalEvalCallback(BaseCallback):
         prev_range = self.raw_env.target_speed_range
         self.raw_env.target_speed_range = (0.10, 0.10)
 
+        # v7.2: Panda3D's taskMgr is normally stepped by
+        # Panda3DRenderCallback during training. The eval loop is OUTSIDE
+        # that callback, so we drive it manually here — otherwise the
+        # camera buffers go stale and the centroid detector reports
+        # target_visible=False on every frame (the v7.1 bug).
+        panda_app = getattr(self.raw_env, 'panda3d_app', None)
+
         for seed in self.eval_seeds:
             obs, _ = self.raw_env.reset(seed=seed)
+            if panda_app is not None:
+                panda_app.taskMgr.step()
             obs = np.asarray(obs, dtype=np.float32)
             # Build initial frame-stack by replicating the first obs.
             # VecFrameStack convention: oldest first, newest last.
@@ -568,10 +618,14 @@ class BestSurvivalEvalCallback(BaseCallback):
             while not done and step < max_steps:
                 act, _ = model.predict(stack, deterministic=True)
                 obs, _r, term, trunc, info = self.raw_env.step(act)
+                if panda_app is not None:
+                    panda_app.taskMgr.step()
                 obs = np.asarray(obs, dtype=np.float32)
                 # Shift stack left by one frame and append new obs at the end
                 stack = np.concatenate([stack[obs_dim:], obs])
-                if info.get('target_visible', False):
+                # v7.3 fix: read from nested visual_tracking dict
+                vt_eval = info.get('visual_tracking', {}) or {}
+                if vt_eval.get('target_visible', False):
                     visible += 1
                 if prev_act is not None:
                     jerk_sum += float(np.mean(np.abs(act - prev_act)))
@@ -759,7 +813,7 @@ def parse_args():
     p.add_argument('--max-ep-steps', type=int, default=3000,
                    help="3000 steps = 30 s episode")
     p.add_argument('--lemniscate-scale', type=float, default=2.0)
-    p.add_argument('--output-dir', type=str, default='./models/hover_track_v7')
+    p.add_argument('--output-dir', type=str, default='./models/hover_track_v7_3')
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--no-display', action='store_true')
 
@@ -772,7 +826,9 @@ def parse_args():
     p.add_argument('--gamma', type=float, default=0.99)
 
     # v7 reward weights
-    p.add_argument('--w-alive', type=float, default=0.10)
+    p.add_argument('--w-alive', type=float, default=0.50,
+                   help="v7.1: bumped 0.10 → 0.50 to kill 'die early' "
+                        "reward-hacking observed in v7.")
     p.add_argument('--w-jerk', type=float, default=0.40)
     p.add_argument('--w-invisible', type=float, default=0.05)
     p.add_argument('--stability-gate', type=float, default=0.30)
@@ -790,9 +846,17 @@ def parse_args():
     # Soft termination
     p.add_argument('--alt-soft-limit', type=float, default=1.5)
     p.add_argument('--alt-soft-steps', type=int, default=100)
-    p.add_argument('--invisible-term-steps', type=int, default=200,
+    p.add_argument('--invisible-term-steps', type=int, default=100,
                    help="Truncate episode after N consecutive steps without "
-                        "the sphere visible (default 200 = 2 s)")
+                        "the sphere visible (v7.2: 100 = 1.0 s, was 60 in "
+                        "v7.1 — slightly more recovery margin paired with a "
+                        "much heavier truncation penalty).")
+    p.add_argument('--invisible-term-penalty', type=float, default=20.0,
+                   help="Reward penalty applied when the lost-target "
+                        "truncation fires (v7.2: 20.0, was 2.0 in v7.1 — "
+                        "kills the 'die quickly' truncation-loop local "
+                        "optimum: a 60/100-step truncation cycle now nets "
+                        "≈ +1 instead of ≈ +19).")
 
     # Eval & checkpoints
     p.add_argument('--eval-freq', type=int, default=10_000)
@@ -919,7 +983,7 @@ class HoverTrackV7App(ShowBase):
         ep_duration = args.max_ep_steps * 0.01
 
         print("\n" + "=" * 70)
-        print("  HOVER-TRACK v7 — SAC FROM SCRATCH (survival-first)")
+        print("  HOVER-TRACK v7.3 — SAC (info-dict fix applied)")
         print("=" * 70)
         print(f"  Hover height:      {args.hover_height} m")
         print(f"  Lemniscate scale:  {args.lemniscate_scale} m")
@@ -943,7 +1007,8 @@ class HoverTrackV7App(ShowBase):
               f"{args.alt_soft_steps} steps")
         print(f"  Lost-target trunc: {args.invisible_term_steps} steps "
               f"({args.invisible_term_steps/100:.1f} s)")
-        print(f"  Curriculum:        A[0-20%] B[20-40%] C[40-70%] D[70-100%]")
+        print(f"  Curriculum:        A[0-35%] B[35-50%] C[50-75%] D[75-100%]")
+        print(f"  Phase A jit_xy:    {0.05:.2f} → {0.30:.2f} (ramp inside A)")
         print(f"  Eval:              every {args.eval_freq:,} steps × "
               f"{args.n_eval_episodes} eps (fixed seeds)")
         print(f"  Best metric:       (survival, visibility, -jerk) lex")
@@ -1017,7 +1082,7 @@ class HoverTrackV7App(ShowBase):
             'total_timesteps': args.timesteps,
             'training_time_seconds': elapsed,
             'algorithm': 'SAC',
-            'version': 'v7',
+            'version': 'v7.3',
             'fine_tune': False,
             'observation_dim': 19,
             'n_frame_stack': args.n_stack,
@@ -1050,10 +1115,10 @@ class HoverTrackV7App(ShowBase):
                 'invisible_streak_steps': args.invisible_term_steps,
             },
             'curriculum_phases': {
-                'A': '0-20% (hover, target stationary, jit_xy=0.10)',
-                'B': '20-40% (static FOV, target stationary, jit_xy=0.30)',
-                'C': '40-70% (lemniscate slow 0.05-0.10 m/s)',
-                'D': '70-100% (lemniscate medium 0.10-0.20 m/s)',
+                'A': '0-35% (hover, target stationary, jit_xy ramps 0.05→0.30)',
+                'B': '35-50% (static FOV, target stationary, jit_xy=0.30)',
+                'C': '50-75% (lemniscate slow 0.05-0.10 m/s)',
+                'D': '75-100% (lemniscate medium 0.10-0.20 m/s)',
             },
             'eval': {
                 'best_survival': self.eval_cb.best_survival,

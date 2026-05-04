@@ -1,0 +1,30 @@
+======================================================================
+  VISIBILITY DIAGNOSTIC VERDICT
+======================================================================
+
+H3 (buffer mismatch): NO BUG
+
+H2 (env-flag override): NO BUG
+
+H2b (info-dict propagation): [WARN] MISMATCH:
+    -> h1.4_centered: direct=True but step_info=False
+    -> h1.4_offset0.2: direct=True but step_info=False
+    -> h1.4_offset0.3: direct=True but step_info=False
+    -> h1.5_centered: direct=True but step_info=False
+    -> h2.0_centered: direct=True but step_info=False
+    -> h2.0_offset0.4: direct=True but step_info=False
+
+H1 (HSV threshold) — pixel counts per variant:
+  config              strict_current      loose_h             loose_sv            very_loose          anything_pinkish  
+  h1.4_centered       284                 284                 292                 292                 292               
+  h1.4_offset0.2      282                 282                 294                 294                 294               
+  h1.4_offset0.3      278                 278                 288                 288                 288               
+  h1.5_centered       240                 240                 251                 251                 251               
+  h2.0_centered       129                 129                 138                 138                 138               
+  h2.0_offset0.4      132                 132                 135                 135                 135               
+
+  -> H1 not confirmed by this run.
+
+======================================================================
+  VERDICT: H2 is the bug. An env flag or reward branch overrides target_visible.
+======================================================================

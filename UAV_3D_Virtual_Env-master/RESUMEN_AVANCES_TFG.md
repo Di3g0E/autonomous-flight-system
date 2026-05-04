@@ -1,59 +1,90 @@
-# Resumen de Avances: Sistema de Seguimiento Visual de Objetos Móviles (v3.1 → v6)
+# Resumen de Avances TFG — Estado Actual y Petición de Orientación
 
-Este documento resume la evolución técnica del sistema de vuelo autónomo desde la línea base estable (v3.1) hasta la implementación de la arquitectura de recompensa v6 enfocada en supervivencia y estabilidad.
-
-## 1. Evolución del Modelo y Metodología
-
-### Línea Base: v3.1 (Estática)
-*   **Estado**: Modelo SAC altamente estable para tareas de hover estático.
-*   **Rendimiento**: >93% de supervivencia en entornos sin movimiento.
-*   **Limitación**: Incapaz de seguir objetivos con dinámica propia (lemniscata).
-
-### Transición a Dinámica: v4.1 / v4.2
-*   **Hito**: Introducción del objetivo móvil (trayectoria de lemniscata de Bernoulli).
-*   **Aprendizaje**: Se identificó el fenómeno del *Catastrophic Forgetting* al pasar de fases estáticas a dinámicas.
-*   **Corrección (v4.2)**: Se eliminó la penalización por colisión (*crash penalty*) que incentivaba episodios cortos.
-
-### Currículo Geométrico: v5
-*   **Innovación**: Implementación de un currículo de inicialización basado en el porcentaje de área del Campo de Visión (FOV).
-*   **Diagnóstico Crítico**: A pesar de un seguimiento visual excelente (checkpoint 250k), el modelo v5 sufría de una tasa de supervivencia del 0% debido a un error de sincronización en el motor de físicas y una priorización excesiva del centrado sobre la estabilidad.
-
-### Arquitectura de Supervivencia: v6 (Actualizada)
-*   **Hito**: Rediseño aditivo de la función de recompensa y corrección de dos bugs críticos de física (Teletransporte y Altitud).
-*   **Enfoque**: Conseguir un vuelo suave y estable a la altura de misión real (`1.39m`) sin los errores de spawn que falseaban las métricas de supervivencia.
+**Fecha**: 28 de abril de 2026
+**Estado del proyecto**: Bloqueado en un techo de rendimiento que no consigo superar tras múltiples iteraciones.
 
 ---
 
-## 2. Innovaciones Técnicas en v6
-
-### Reajuste del Equilibrio de Recompensa
-Se han introducido tres componentes aditivos en el Wrapper de entrenamiento para penalizar la agresividad excesiva:
-1.  **Bonus de Estabilidad (+2.0)**: Recompensa directa por mantener el dron nivelado.
-2.  **Penalización Extra de Jerk (-1.2)**: Forzado de una política de control suave.
-3.  **Penalización de Altitud (-1.0)**: Mantenimiento estricto de la cota de vuelo.
-
-### Correcciones de Motor de Físicas
-1.  **Bug de Teletransporte**: Sincronización de `state` y `previous_state` en el motor `solve_ivp`.
-2.  **Spawn Altitude Bug (Corregido en v6_fixed)**: 
-    - **Fallo**: El objetivo se generaba relativo al dron en el reset, resultando en un spawn a solo 14cm del suelo físico.
-    - **Efecto**: Inestabilidad inmediata y supervivencia del 0% en evaluaciones.
-    - **Solución**: Fijación del objetivo en el suelo físico (`z=0`) para garantizar un despegue seguro a `1.39m`.
+He invertido muchas horas de trabajo, probando arquitecturas distintas, y aunque hay avances claros en algunas partes, **no he conseguido el objetivo principal de vuelo continuo sostenido**. Necesito tu orientación para decidir cómo cerrar el TFG.
 
 ---
 
-## 3. Estado de Entrenamiento y Resultados
+## 1. Lo que SÍ funciona bien
 
-### Comparativa de Configuraciones
-
-| Característica | v5 (Anterior) | v6 (Original) | v6_fixed (Actual) |
-| :--- | :--- | :--- | :--- |
-| **Punto de partida** | v4.1 @ 150k | v5 @ 250k | **v4.1 @ 150k (Base estable)** |
-| **Estabilidad** | Gate mult. | Bonus aditivo (+2.0) | **Bonus aditivo (+2.0)** |
-| **Altitud Inicio** | Variable | 0.14m (Bug) | **1.39m (Corregida)** |
-| **Supervivencia** | 0.0% | 0.0% (Bug spawn) | **En entrenamiento** |
+- **El dron ve la esfera correctamente**. El detector visual identifica el objetivo en el 95–100 % de los frames durante el vuelo. Esta era una preocupación importante y está resuelta.
+- **El dron se inicializa bien**. Spawn determinista sobre la esfera con la geometría correcta.
+- **El sistema de tracking visual funciona**. El dron centra la esfera en el campo de visión durante los segundos que vuela.
+- **El pipeline completo está montado**: entorno de simulación, entrenamiento RL (SAC), evaluaciones automáticas, generación de vídeos, registro de telemetría detallada.
 
 ---
 
-## 4. Próximos Pasos Propuestos
-1.  **Validación v6_fixed**: Confirmar que con la altura corregida, el agente no solo sigue visualmente al objetivo sino que mantiene el vuelo indefinidamente.
-2.  **Ajuste de Ganancias**: Si la penalización de Jerk de la v6 resulta demasiado restrictiva para la agilidad necesaria en Phase C, reducir ligeramente de -1.2 a -0.8.
+## 2. Lo que NO he conseguido
+
+**El dron se mantiene en el aire solo ~2 segundos** antes de perder el control. El objetivo era 30 segundos de vuelo continuo. Después de ~2 segundos, el dron pierde estabilidad (se inclina demasiado, sale de la zona de vuelo, o se cae).
+
+Esto se traduce en **0 % de supervivencia** en todas las evaluaciones, en TODAS las versiones que he probado.
+
+---
+
+## 3. Lo que he probado (resumen simple)
+
+He hecho 9 versiones del sistema entre v6 y la actual. Cada una intentaba arreglar algo distinto:
+
+| Versión | Cambio principal | Resultado |
+|---|---|---|
+| v7.0–7.2 | Reward survival-first, currículo de 4 fases | Bug crítico no detectado: el dron entrenó "a ciegas" |
+| **v7.3** | **Detecté y arreglé el bug crítico** | El dron empezó a ver la esfera de verdad por primera vez |
+| v7.4 | Bonus por sobrevivir más, freno motor | Sigue 0 % supervivencia |
+| v7.5 | Restricciones de altitud asimétricas | Sigue 0 % supervivencia (diagnóstico inicial fue erróneo) |
+| v8 | **Simplifiqué TODO**: reward minimal | Sigue 0 % supervivencia |
+| v8_short | Reduje el horizonte (30s → 5s) | **Sigue 0 % supervivencia** |
+
+### El bug crítico (v7.3) merece mención especial
+
+Durante varias sesiones, mi código leía mal una variable del entorno. El dron VEÍA la esfera (los vídeos lo confirman), pero la información llegaba mal a la función de recompensa. Resultado: durante 200.000 pasos de entrenamiento (5 horas de GPU acumuladas en v7.0–v7.2), el agente entrenaba en un mundo donde "no veía" la esfera para efectos de aprendizaje. **Encontrarlo y arreglarlo fue un avance importante**, pero también significó que parte del trabajo previo no contaba.
+
+---
+
+## 4. Mi preocupación
+
+He cambiado el reward en muchas direcciones (más complejo, más simple, distintos pesos, distintas penalizaciones). He cambiado el horizonte temporal. He simplificado el spawn. He añadido y quitado mecanismos.
+
+**Todo termina en el mismo punto: ~2 segundos de vuelo y caída**.
+
+Esto me hace pensar que:
+
+1. El problema **no es la función de recompensa** (lo he probado complejo y simple, mismo resultado).
+2. El problema **no es el horizonte** (con 5 segundos como objetivo en lugar de 30, mismo resultado).
+3. El problema **probablemente está en algo más profundo**: la combinación del algoritmo SAC con la dinámica del simulador y el número de pasos de entrenamiento (200.000) parece insuficiente para vuelo sostenido.
+
+No sé si esto es algo que se puede resolver con más tiempo de cómputo (otras versiones anteriores mucho más largas no han funcionado), con un cambio de algoritmo, o si es una limitación intrínseca del setup que no detecté antes. Por eso te escribo.
+
+---
+
+## 5. Lo que tengo claro y lo que no
+
+**Tengo claro**:
+- El sistema de visión funciona.
+- El sistema de tracking visual durante vuelo funciona durante ~2 segundos.
+- He documentado cuantitativamente cada intento, con métricas y vídeos.
+
+**No tengo claro**:
+- Si invertir más tiempo en una v9 con cambios estructurales (filtro de paso bajo en acciones, entrenamiento de 1 millón de pasos, otro algoritmo como TQC) tendría éxito.
+- Si tiene más sentido cerrar el TFG con lo que hay y documentar honestamente el techo encontrado, presentándolo como un resultado caracterizado.
+- Cómo enmarcar académicamente este resultado parcial.
+
+---
+
+## 6. Tres opciones que veo
+
+### Opción A — Cerrar el TFG con lo actual
+Defender que el sistema logra **tracking visual robusto durante ventanas cortas (~2 s)** y cooperaría con el módulo de búsqueda en espiral en despliegue real (que ya está entrenado y funciona). El resultado es honesto, está documentado, y el módulo es funcional para su rol específico.
+
+### Opción B — Una iteración más con cambios estructurales
+Probar una v9 atacando la dinámica directamente (no el reward): filtro de suavizado de acciones, entrenamiento de 500k–1M pasos. Coste estimado: 1–2 sesiones de trabajo y ~10–15 h de GPU.
+
+U otra opción v9 sería intentar replicar un siguelíneas pero en 3D, es decir, que el dron siga la "línea" de la esfera. Esto sería cambiar el entrenamiento y la función de recompensa. No tendría en cuenta la velocidad de la esfera, solo la posición. No se si sería una buena opción, pero es una opción.
+
+¿Qué dirección tiene más sentido dado el calendario del TFG? 
+
+Gracias por tu tiempo.

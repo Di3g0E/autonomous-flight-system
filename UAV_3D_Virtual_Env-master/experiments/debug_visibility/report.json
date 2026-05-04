@@ -1,0 +1,1264 @@
+{
+  "configs": [
+    {
+      "label": "h1.4_centered",
+      "drone_z": 1.394,
+      "offset_xy": [
+        0.0,
+        0.0
+      ],
+      "buffer_shape": [
+        32,
+        32,
+        3
+      ],
+      "buffer_min_max_mean": [
+        0,
+        255,
+        104.96
+      ],
+      "h3_direct_buffer_matches_env": true,
+      "h1_masks": {
+        "strict_current": {
+          "lower": [
+            140,
+            100,
+            100
+          ],
+          "upper": [
+            170,
+            255,
+            255
+          ],
+          "pixel_count": 284,
+          "would_be_visible": true
+        },
+        "loose_h": {
+          "lower": [
+            130,
+            100,
+            100
+          ],
+          "upper": [
+            175,
+            255,
+            255
+          ],
+          "pixel_count": 284,
+          "would_be_visible": true
+        },
+        "loose_sv": {
+          "lower": [
+            140,
+            50,
+            50
+          ],
+          "upper": [
+            170,
+            255,
+            255
+          ],
+          "pixel_count": 292,
+          "would_be_visible": true
+        },
+        "very_loose": {
+          "lower": [
+            125,
+            40,
+            40
+          ],
+          "upper": [
+            180,
+            255,
+            255
+          ],
+          "pixel_count": 292,
+          "would_be_visible": true
+        },
+        "anything_pinkish": {
+          "lower": [
+            120,
+            20,
+            20
+          ],
+          "upper": [
+            180,
+            255,
+            255
+          ],
+          "pixel_count": 292,
+          "would_be_visible": true
+        }
+      },
+      "brightest_pixels": [
+        {
+          "y": 15,
+          "x": 18,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 6,
+          "x": 27,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 23,
+          "x": 13,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 23,
+          "x": 14,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 23,
+          "x": 15,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 23,
+          "x": 16,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 23,
+          "x": 17,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 23,
+          "x": 18,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        }
+      ],
+      "h2_env_flags": {
+        "reward_version": "v3.1",
+        "stabilization_only": false,
+        "target_visible_last_step": false,
+        "camera_down": true,
+        "filming_mode": true,
+        "centroid_obs": true
+      },
+      "direct_detect": {
+        "cx": -0.03125,
+        "cy": 0.06866197183098599,
+        "frac": 0.27734375,
+        "vis": 1.0
+      },
+      "step_info": {
+        "target_visible": false,
+        "target_pixels": 0,
+        "r_centering": 0.0,
+        "r_stability": 0.0
+      },
+      "buffer_identical_pre_post_step": false
+    },
+    {
+      "label": "h1.4_offset0.2",
+      "drone_z": 1.394,
+      "offset_xy": [
+        0.2,
+        0.0
+      ],
+      "buffer_shape": [
+        32,
+        32,
+        3
+      ],
+      "buffer_min_max_mean": [
+        0,
+        255,
+        103.54
+      ],
+      "h3_direct_buffer_matches_env": true,
+      "h1_masks": {
+        "strict_current": {
+          "lower": [
+            140,
+            100,
+            100
+          ],
+          "upper": [
+            170,
+            255,
+            255
+          ],
+          "pixel_count": 282,
+          "would_be_visible": true
+        },
+        "loose_h": {
+          "lower": [
+            130,
+            100,
+            100
+          ],
+          "upper": [
+            175,
+            255,
+            255
+          ],
+          "pixel_count": 282,
+          "would_be_visible": true
+        },
+        "loose_sv": {
+          "lower": [
+            140,
+            50,
+            50
+          ],
+          "upper": [
+            170,
+            255,
+            255
+          ],
+          "pixel_count": 294,
+          "would_be_visible": true
+        },
+        "very_loose": {
+          "lower": [
+            125,
+            40,
+            40
+          ],
+          "upper": [
+            180,
+            255,
+            255
+          ],
+          "pixel_count": 294,
+          "would_be_visible": true
+        },
+        "anything_pinkish": {
+          "lower": [
+            120,
+            20,
+            20
+          ],
+          "upper": [
+            180,
+            255,
+            255
+          ],
+          "pixel_count": 294,
+          "would_be_visible": true
+        }
+      },
+      "brightest_pixels": [
+        {
+          "y": 31,
+          "x": 31,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 14,
+          "x": 29,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 15,
+          "x": 9,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 15,
+          "x": 8,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 15,
+          "x": 7,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 15,
+          "x": 6,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 15,
+          "x": 5,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 15,
+          "x": 4,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        }
+      ],
+      "h2_env_flags": {
+        "reward_version": "v3.1",
+        "stabilization_only": false,
+        "target_visible_last_step": false,
+        "camera_down": true,
+        "filming_mode": true,
+        "centroid_obs": true
+      },
+      "direct_detect": {
+        "cx": -0.4018173758865248,
+        "cy": -0.11015070921985815,
+        "frac": 0.275390625,
+        "vis": 1.0
+      },
+      "step_info": {
+        "target_visible": false,
+        "target_pixels": 0,
+        "r_centering": 0.0,
+        "r_stability": 0.0
+      },
+      "buffer_identical_pre_post_step": false
+    },
+    {
+      "label": "h1.4_offset0.3",
+      "drone_z": 1.394,
+      "offset_xy": [
+        0.3,
+        0.0
+      ],
+      "buffer_shape": [
+        32,
+        32,
+        3
+      ],
+      "buffer_min_max_mean": [
+        0,
+        255,
+        104.23
+      ],
+      "h3_direct_buffer_matches_env": true,
+      "h1_masks": {
+        "strict_current": {
+          "lower": [
+            140,
+            100,
+            100
+          ],
+          "upper": [
+            170,
+            255,
+            255
+          ],
+          "pixel_count": 278,
+          "would_be_visible": true
+        },
+        "loose_h": {
+          "lower": [
+            130,
+            100,
+            100
+          ],
+          "upper": [
+            175,
+            255,
+            255
+          ],
+          "pixel_count": 278,
+          "would_be_visible": true
+        },
+        "loose_sv": {
+          "lower": [
+            140,
+            50,
+            50
+          ],
+          "upper": [
+            170,
+            255,
+            255
+          ],
+          "pixel_count": 288,
+          "would_be_visible": true
+        },
+        "very_loose": {
+          "lower": [
+            125,
+            40,
+            40
+          ],
+          "upper": [
+            180,
+            255,
+            255
+          ],
+          "pixel_count": 288,
+          "would_be_visible": true
+        },
+        "anything_pinkish": {
+          "lower": [
+            120,
+            20,
+            20
+          ],
+          "upper": [
+            180,
+            255,
+            255
+          ],
+          "pixel_count": 288,
+          "would_be_visible": true
+        }
+      },
+      "brightest_pixels": [
+        {
+          "y": 31,
+          "x": 31,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 15,
+          "x": 10,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 15,
+          "x": 8,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 15,
+          "x": 7,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 15,
+          "x": 6,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 15,
+          "x": 5,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 15,
+          "x": 4,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 15,
+          "x": 3,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        }
+      ],
+      "h2_env_flags": {
+        "reward_version": "v3.1",
+        "stabilization_only": false,
+        "target_visible_last_step": false,
+        "camera_down": true,
+        "filming_mode": true,
+        "centroid_obs": true
+      },
+      "direct_detect": {
+        "cx": -0.5838579136690647,
+        "cy": -0.10836330935251803,
+        "frac": 0.271484375,
+        "vis": 1.0
+      },
+      "step_info": {
+        "target_visible": false,
+        "target_pixels": 0,
+        "r_centering": 0.0,
+        "r_stability": 0.0
+      },
+      "buffer_identical_pre_post_step": false
+    },
+    {
+      "label": "h1.5_centered",
+      "drone_z": 1.5,
+      "offset_xy": [
+        0.0,
+        0.0
+      ],
+      "buffer_shape": [
+        32,
+        32,
+        3
+      ],
+      "buffer_min_max_mean": [
+        0,
+        255,
+        97.81
+      ],
+      "h3_direct_buffer_matches_env": true,
+      "h1_masks": {
+        "strict_current": {
+          "lower": [
+            140,
+            100,
+            100
+          ],
+          "upper": [
+            170,
+            255,
+            255
+          ],
+          "pixel_count": 240,
+          "would_be_visible": true
+        },
+        "loose_h": {
+          "lower": [
+            130,
+            100,
+            100
+          ],
+          "upper": [
+            175,
+            255,
+            255
+          ],
+          "pixel_count": 240,
+          "would_be_visible": true
+        },
+        "loose_sv": {
+          "lower": [
+            140,
+            50,
+            50
+          ],
+          "upper": [
+            170,
+            255,
+            255
+          ],
+          "pixel_count": 251,
+          "would_be_visible": true
+        },
+        "very_loose": {
+          "lower": [
+            125,
+            40,
+            40
+          ],
+          "upper": [
+            180,
+            255,
+            255
+          ],
+          "pixel_count": 251,
+          "would_be_visible": true
+        },
+        "anything_pinkish": {
+          "lower": [
+            120,
+            20,
+            20
+          ],
+          "upper": [
+            180,
+            255,
+            255
+          ],
+          "pixel_count": 251,
+          "would_be_visible": true
+        }
+      },
+      "brightest_pixels": [
+        {
+          "y": 20,
+          "x": 20,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 14,
+          "x": 21,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 14,
+          "x": 29,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 14,
+          "x": 28,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 14,
+          "x": 27,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 14,
+          "x": 26,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 19,
+          "x": 31,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 20,
+          "x": 11,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        }
+      ],
+      "h2_env_flags": {
+        "reward_version": "v3.1",
+        "stabilization_only": false,
+        "target_visible_last_step": false,
+        "camera_down": true,
+        "filming_mode": true,
+        "centroid_obs": true
+      },
+      "direct_detect": {
+        "cx": -0.004166666666666652,
+        "cy": -0.12760416666666663,
+        "frac": 0.234375,
+        "vis": 1.0
+      },
+      "step_info": {
+        "target_visible": false,
+        "target_pixels": 0,
+        "r_centering": 0.0,
+        "r_stability": 0.0
+      },
+      "buffer_identical_pre_post_step": false
+    },
+    {
+      "label": "h2.0_centered",
+      "drone_z": 2.0,
+      "offset_xy": [
+        0.0,
+        0.0
+      ],
+      "buffer_shape": [
+        32,
+        32,
+        3
+      ],
+      "buffer_min_max_mean": [
+        0,
+        255,
+        84.17
+      ],
+      "h3_direct_buffer_matches_env": true,
+      "h1_masks": {
+        "strict_current": {
+          "lower": [
+            140,
+            100,
+            100
+          ],
+          "upper": [
+            170,
+            255,
+            255
+          ],
+          "pixel_count": 129,
+          "would_be_visible": true
+        },
+        "loose_h": {
+          "lower": [
+            130,
+            100,
+            100
+          ],
+          "upper": [
+            175,
+            255,
+            255
+          ],
+          "pixel_count": 129,
+          "would_be_visible": true
+        },
+        "loose_sv": {
+          "lower": [
+            140,
+            50,
+            50
+          ],
+          "upper": [
+            170,
+            255,
+            255
+          ],
+          "pixel_count": 138,
+          "would_be_visible": true
+        },
+        "very_loose": {
+          "lower": [
+            125,
+            40,
+            40
+          ],
+          "upper": [
+            180,
+            255,
+            255
+          ],
+          "pixel_count": 138,
+          "would_be_visible": true
+        },
+        "anything_pinkish": {
+          "lower": [
+            120,
+            20,
+            20
+          ],
+          "upper": [
+            180,
+            255,
+            255
+          ],
+          "pixel_count": 138,
+          "would_be_visible": true
+        }
+      },
+      "brightest_pixels": [
+        {
+          "y": 11,
+          "x": 18,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 15,
+          "x": 13,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 14,
+          "x": 12,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 13,
+          "x": 31,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 13,
+          "x": 30,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 8,
+          "x": 25,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 8,
+          "x": 26,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 8,
+          "x": 27,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        }
+      ],
+      "h2_env_flags": {
+        "reward_version": "v3.1",
+        "stabilization_only": false,
+        "target_visible_last_step": false,
+        "camera_down": true,
+        "filming_mode": true,
+        "centroid_obs": true
+      },
+      "direct_detect": {
+        "cx": -0.0029069767441860517,
+        "cy": -0.1308139534883721,
+        "frac": 0.1259765625,
+        "vis": 1.0
+      },
+      "step_info": {
+        "target_visible": false,
+        "target_pixels": 0,
+        "r_centering": 0.0,
+        "r_stability": 0.0
+      },
+      "buffer_identical_pre_post_step": false
+    },
+    {
+      "label": "h2.0_offset0.4",
+      "drone_z": 2.0,
+      "offset_xy": [
+        0.4,
+        0.0
+      ],
+      "buffer_shape": [
+        32,
+        32,
+        3
+      ],
+      "buffer_min_max_mean": [
+        0,
+        255,
+        83.88
+      ],
+      "h3_direct_buffer_matches_env": true,
+      "h1_masks": {
+        "strict_current": {
+          "lower": [
+            140,
+            100,
+            100
+          ],
+          "upper": [
+            170,
+            255,
+            255
+          ],
+          "pixel_count": 132,
+          "would_be_visible": true
+        },
+        "loose_h": {
+          "lower": [
+            130,
+            100,
+            100
+          ],
+          "upper": [
+            175,
+            255,
+            255
+          ],
+          "pixel_count": 132,
+          "would_be_visible": true
+        },
+        "loose_sv": {
+          "lower": [
+            140,
+            50,
+            50
+          ],
+          "upper": [
+            170,
+            255,
+            255
+          ],
+          "pixel_count": 135,
+          "would_be_visible": true
+        },
+        "very_loose": {
+          "lower": [
+            125,
+            40,
+            40
+          ],
+          "upper": [
+            180,
+            255,
+            255
+          ],
+          "pixel_count": 135,
+          "would_be_visible": true
+        },
+        "anything_pinkish": {
+          "lower": [
+            120,
+            20,
+            20
+          ],
+          "upper": [
+            180,
+            255,
+            255
+          ],
+          "pixel_count": 135,
+          "would_be_visible": true
+        }
+      },
+      "brightest_pixels": [
+        {
+          "y": 9,
+          "x": 7,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 24,
+          "x": 23,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 8,
+          "x": 6,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 8,
+          "x": 5,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 12,
+          "x": 11,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 12,
+          "x": 12,
+          "H": 150,
+          "S": 255,
+          "V": 255,
+          "RGB": [
+            255,
+            0,
+            255
+          ]
+        },
+        {
+          "y": 18,
+          "x": 29,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        },
+        {
+          "y": 18,
+          "x": 28,
+          "H": 0,
+          "S": 0,
+          "V": 255,
+          "RGB": [
+            255,
+            255,
+            255
+          ]
+        }
+      ],
+      "h2_env_flags": {
+        "reward_version": "v3.1",
+        "stabilization_only": false,
+        "target_visible_last_step": false,
+        "camera_down": true,
+        "filming_mode": true,
+        "centroid_obs": true
+      },
+      "direct_detect": {
+        "cx": -0.5392992424242424,
+        "cy": -0.09943181818181823,
+        "frac": 0.12890625,
+        "vis": 1.0
+      },
+      "step_info": {
+        "target_visible": false,
+        "target_pixels": 0,
+        "r_centering": 0.0,
+        "r_stability": 0.0
+      },
+      "buffer_identical_pre_post_step": false
+    }
+  ]
+}

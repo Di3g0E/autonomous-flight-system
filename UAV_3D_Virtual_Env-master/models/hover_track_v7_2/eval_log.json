@@ -1,0 +1,65 @@
+[
+  {
+    "timestep": 10000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.004451644334849259,
+    "mean_steps": 203.4
+  },
+  {
+    "timestep": 20000,
+    "survival": 0.0,
+    "visibility": 0.9310806345009913,
+    "jerk": 0.01592183581267334,
+    "mean_steps": 147.4
+  },
+  {
+    "timestep": 30000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.01990667704704203,
+    "mean_steps": 109.2
+  },
+  {
+    "timestep": 40000,
+    "survival": 0.0,
+    "visibility": 0.9546875,
+    "jerk": 0.02008964560783167,
+    "mean_steps": 188.4
+  },
+  {
+    "timestep": 50000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.020217189958050656,
+    "mean_steps": 171.0
+  },
+  {
+    "timestep": 60000,
+    "survival": 0.0,
+    "visibility": 0.9572815533980583,
+    "jerk": 0.022647101693502862,
+    "mean_steps": 190.0
+  },
+  {
+    "timestep": 70000,
+    "survival": 0.0,
+    "visibility": 0.9385892116182573,
+    "jerk": 0.02320897339090109,
+    "mean_steps": 189.2
+  },
+  {
+    "timestep": 80000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.02241047718063058,
+    "mean_steps": 192.6
+  },
+  {
+    "timestep": 90000,
+    "survival": 0.0,
+    "visibility": 0.9957671957671957,
+    "jerk": 0.029202593996177213,
+    "mean_steps": 198.4
+  }
+]

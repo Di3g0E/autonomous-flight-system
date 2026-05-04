@@ -2,8 +2,22 @@
   {
     "timestep": 10000,
     "survival": 0.0,
-    "visibility": 0.0,
-    "jerk": 0.009452979642935472,
-    "mean_steps": 100.0
+    "visibility": 1.0,
+    "jerk": 0.004451644334849259,
+    "mean_steps": 203.4
+  },
+  {
+    "timestep": 20000,
+    "survival": 0.0,
+    "visibility": 0.9310806345009913,
+    "jerk": 0.01592183581267334,
+    "mean_steps": 147.4
+  },
+  {
+    "timestep": 30000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.01990667704704203,
+    "mean_steps": 109.2
   }
 ]

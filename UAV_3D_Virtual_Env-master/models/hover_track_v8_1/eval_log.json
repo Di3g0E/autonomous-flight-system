@@ -1,0 +1,107 @@
+[
+  {
+    "timestep": 10000,
+    "survival": 0.0,
+    "visibility": 0.9181045261315329,
+    "jerk": 0.03413490237091401,
+    "mean_steps": 156.2
+  },
+  {
+    "timestep": 20000,
+    "survival": 0.0,
+    "visibility": 0.9209369369369369,
+    "jerk": 0.049168055834408565,
+    "mean_steps": 153.2
+  },
+  {
+    "timestep": 30000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.08371113175871961,
+    "mean_steps": 157.2
+  },
+  {
+    "timestep": 40000,
+    "survival": 0.0,
+    "visibility": 0.934447004608295,
+    "jerk": 0.09121054818781862,
+    "mean_steps": 190.4
+  },
+  {
+    "timestep": 50000,
+    "survival": 0.0,
+    "visibility": 0.9829884717706179,
+    "jerk": 0.1290838945554072,
+    "mean_steps": 162.8
+  },
+  {
+    "timestep": 60000,
+    "survival": 0.0,
+    "visibility": 0.9745665445665447,
+    "jerk": 0.057248149477396315,
+    "mean_steps": 190.8
+  },
+  {
+    "timestep": 70000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.05499022097198288,
+    "mean_steps": 195.6
+  },
+  {
+    "timestep": 80000,
+    "survival": 0.0,
+    "visibility": 0.9693961952026469,
+    "jerk": 0.05166105855399962,
+    "mean_steps": 195.0
+  },
+  {
+    "timestep": 90000,
+    "survival": 0.0,
+    "visibility": 0.9429752066115702,
+    "jerk": 0.05919930853025569,
+    "mean_steps": 185.8
+  },
+  {
+    "timestep": 100000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.07314102437427744,
+    "mean_steps": 140.2
+  },
+  {
+    "timestep": 110000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.06678803546459033,
+    "mean_steps": 154.4
+  },
+  {
+    "timestep": 120000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.09075492486706296,
+    "mean_steps": 156.8
+  },
+  {
+    "timestep": 130000,
+    "survival": 0.0,
+    "visibility": 0.9770700636942674,
+    "jerk": 0.05907115127338201,
+    "mean_steps": 165.4
+  },
+  {
+    "timestep": 140000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.07077838354623636,
+    "mean_steps": 171.2
+  },
+  {
+    "timestep": 150000,
+    "survival": 0.0,
+    "visibility": 0.9966101694915255,
+    "jerk": 0.08344936235297067,
+    "mean_steps": 175.0
+  }
+]
