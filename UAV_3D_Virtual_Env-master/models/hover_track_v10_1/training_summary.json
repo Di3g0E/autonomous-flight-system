@@ -1,0 +1,51 @@
+{
+  "total_episodes": 153,
+  "final_mean_reward": 56.393786587417125,
+  "csv_path": "models\\hover_track_v10_1\\training_log.csv",
+  "total_timesteps": 40000,
+  "training_time_seconds": 1785.0565297603607,
+  "algorithm": "SAC",
+  "variant": "v10.1",
+  "transfer_learning_from": "./models/hover_track_v9_1_1/best_model_TFG.zip",
+  "vec_normalize_loaded_from": "./models/hover_track_v9_1_1/best_vec_normalize_TFG.pkl",
+  "lr_schedule": "linear",
+  "patience": 2,
+  "action_hover_bias": 0.0,
+  "last_known_centroid": false,
+  "curriculum_schedule": null,
+  "frame_stack": 1,
+  "use_layernorm": false,
+  "weight_decay": 0.0,
+  "sac_hyperparams": {
+    "learning_rate": 0.0003,
+    "batch_size": 256,
+    "buffer_size": 200000,
+    "gamma": 0.995,
+    "tau": 0.01,
+    "target_entropy": -2.0,
+    "learning_starts": 1000
+  },
+  "reward_weights": {
+    "alive": 0.1,
+    "jerk": 0.2,
+    "invisible": 1.0,
+    "crash_penalty": 2.0
+  },
+  "spawn": {
+    "height_m": 1.5,
+    "jitter_xy": 0.2
+  },
+  "termination": {
+    "z_min": 0.5,
+    "z_max": 3.0,
+    "invisible_steps": 100
+  },
+  "eval": {
+    "best_survival": 0.0,
+    "best_steps": 384.6,
+    "best_visibility": 0.7735023936461044,
+    "best_jerk": 0.07610532639786609,
+    "best_step": 35000
+  },
+  "policy_params": 195724
+}

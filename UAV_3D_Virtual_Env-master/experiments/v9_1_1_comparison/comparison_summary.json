@@ -1,0 +1,50 @@
+[
+  {
+    "run": "v9.1.1 (full: gamma=0.995 + VecNormalize + target_entropy=-1)",
+    "best_steps": 3000.0,
+    "best_steps_at_timestep": 90000,
+    "final_steps": 249.2,
+    "best_visibility": 1.0,
+    "final_visibility": 0.8238846533274409
+  },
+  {
+    "run": "Ablation: gamma=0.99 (no horizon extension)",
+    "best_steps": 223.2,
+    "best_steps_at_timestep": 40000,
+    "final_steps": 194.2,
+    "best_visibility": 1.0,
+    "final_visibility": 1.0
+  },
+  {
+    "run": "Ablation: --no-vec-normalize (raw 19-D obs to MLP)",
+    "best_steps": 460.8,
+    "best_steps_at_timestep": 70000,
+    "final_steps": 247.4,
+    "best_visibility": 1.0,
+    "final_visibility": 0.5809882612934313
+  },
+  {
+    "run": "v9 (target_entropy=-2, collapsed to high-altitude attractor)",
+    "best_steps": 220.2,
+    "best_steps_at_timestep": 40000,
+    "final_steps": 220.2,
+    "best_visibility": 1.0,
+    "final_visibility": 0.479381978590059
+  },
+  {
+    "run": "v9.1 (same hyperparams as v9.1.1, lost peak by callback bug)",
+    "best_steps": 3000.0,
+    "best_steps_at_timestep": 90000,
+    "final_steps": 1423.0,
+    "best_visibility": 1.0,
+    "final_visibility": 0.8728286384976526
+  },
+  {
+    "run": "v8.1 baseline (original ~196-step ceiling)",
+    "best_steps": 195.6,
+    "best_steps_at_timestep": 70000,
+    "final_steps": 175.0,
+    "best_visibility": 1.0,
+    "final_visibility": 0.9966101694915255
+  }
+]

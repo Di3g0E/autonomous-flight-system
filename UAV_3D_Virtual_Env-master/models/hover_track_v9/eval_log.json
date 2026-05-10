@@ -1,0 +1,30 @@
+[
+  {
+    "timestep": 10000,
+    "survival": 0.0,
+    "visibility": 1.0,
+    "jerk": 0.034211630410052,
+    "mean_steps": 208.2
+  },
+  {
+    "timestep": 20000,
+    "survival": 0.0,
+    "visibility": 0.9885964912280703,
+    "jerk": 0.08371724685851781,
+    "mean_steps": 172.8
+  },
+  {
+    "timestep": 30000,
+    "survival": 0.0,
+    "visibility": 0.7413101243810528,
+    "jerk": 0.0842041573783294,
+    "mean_steps": 210.2
+  },
+  {
+    "timestep": 40000,
+    "survival": 0.0,
+    "visibility": 0.479381978590059,
+    "jerk": 0.10420858113701419,
+    "mean_steps": 220.2
+  }
+]

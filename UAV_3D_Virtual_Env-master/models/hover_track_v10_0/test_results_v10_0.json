@@ -1,0 +1,114 @@
+{
+  "n_episodes": 10,
+  "survival_rate": 0.2,
+  "mean_steps": 1062.2,
+  "std_steps": 997.3683171226163,
+  "min_steps": 122,
+  "max_steps": 3000,
+  "mean_visibility": 0.9469761842123656,
+  "mean_jerk": 0.09840434314551187,
+  "mean_reward": 537.3762385565117,
+  "std_reward": 719.5407021294332,
+  "episodes": [
+    {
+      "episode": 1,
+      "seed": 2000,
+      "steps": 729,
+      "survived": 0,
+      "visibility": 1.0,
+      "mean_jerk": 0.10000740419459211,
+      "reward": 292.86481485927743,
+      "term_reason": "altitude_low"
+    },
+    {
+      "episode": 2,
+      "seed": 2001,
+      "steps": 651,
+      "survived": 0,
+      "visibility": 0.9431643625192012,
+      "mean_jerk": 0.10448807881428646,
+      "reward": 175.98812751067484,
+      "term_reason": "altitude_low"
+    },
+    {
+      "episode": 3,
+      "seed": 2002,
+      "steps": 180,
+      "survived": 0,
+      "visibility": 1.0,
+      "mean_jerk": 0.05966768509515837,
+      "reward": 129.8987763135682,
+      "term_reason": "altitude_high"
+    },
+    {
+      "episode": 4,
+      "seed": 2003,
+      "steps": 3000,
+      "survived": 1,
+      "visibility": 0.987,
+      "mean_jerk": 0.09280679546105301,
+      "reward": 1250.8384096868112,
+      "term_reason": ""
+    },
+    {
+      "episode": 5,
+      "seed": 2004,
+      "steps": 517,
+      "survived": 0,
+      "visibility": 0.8065764023210832,
+      "mean_jerk": 0.07876912787441136,
+      "reward": 208.7108857204897,
+      "term_reason": "lost_target"
+    },
+    {
+      "episode": 6,
+      "seed": 2005,
+      "steps": 777,
+      "survived": 0,
+      "visibility": 1.0,
+      "mean_jerk": 0.10592170530142858,
+      "reward": 274.0133350186327,
+      "term_reason": "altitude_high"
+    },
+    {
+      "episode": 7,
+      "seed": 2006,
+      "steps": 854,
+      "survived": 0,
+      "visibility": 0.8477751756440282,
+      "mean_jerk": 0.11515129307789372,
+      "reward": 112.20589044362387,
+      "term_reason": "lost_target"
+    },
+    {
+      "episode": 8,
+      "seed": 2007,
+      "steps": 3000,
+      "survived": 1,
+      "visibility": 1.0,
+      "mean_jerk": 0.14801242500891404,
+      "reward": 2461.6289783606458,
+      "term_reason": ""
+    },
+    {
+      "episode": 9,
+      "seed": 2008,
+      "steps": 122,
+      "survived": 0,
+      "visibility": 0.8852459016393442,
+      "mean_jerk": 0.09166272686532706,
+      "reward": 51.150582013701204,
+      "term_reason": "altitude_high"
+    },
+    {
+      "episode": 10,
+      "seed": 2009,
+      "steps": 792,
+      "survived": 0,
+      "visibility": 1.0,
+      "mean_jerk": 0.087556189762054,
+      "reward": 416.4625856376926,
+      "term_reason": "altitude_high"
+    }
+  ]
+}

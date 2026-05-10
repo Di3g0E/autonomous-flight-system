@@ -1,0 +1,5 @@
+{
+  "total_episodes": 246,
+  "final_mean_reward": 37.91783448666334,
+  "csv_path": "models\\hover_track_v9\\training_log.csv"
+}

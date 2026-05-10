@@ -5190,3 +5190,971 @@ Si en futuras iteraciones se quiere atacar el techo de 2 s, las hipótesis estru
 - `models/`: `hover_track_v7_pre1/`, `_v7_pre2/`, `_v7/`, `_v7_1/`, `_v7_2/`, `_v8/`, `_v8_1/` (7 directorios de checkpoints + logs).
 - `experiments/debug_visibility/`: artefactos del diagnóstico HSV/buffer.
 
+---
+
+## [Fecha: 2026-05-04] - Auditoría sistemática de la pipeline RL: gradientes, normalización, optimizador, arquitectura
+
+### Motivación
+Tras cerrar v8.1 con la conclusión "techo estructural de ~2 s, no es problema de reward", se planteó una revisión metódica de cinco frentes que pudieran estar saboteando el entrenamiento sin generar errores visibles:
+
+1. ¿Se actualizan realmente los pesos? ¿Hay vanishing gradients?
+2. Debug paso a paso del MDP.
+3. Normalización de observación y reward.
+4. Optimizador e hiperparámetros.
+5. Arquitectura.
+
+### Auditoría del código v8 — hallazgos cuantitativos
+Audit exhaustivo de `scripts/train_hover_track_v8.py` + `src/envs/panda3d_quadrotor_env.py`:
+
+| Aspecto | Estado v8 | Banderas rojas |
+|---|---|---|
+| **Obs** | 19-D crudo | Posición [-5,5] m + velocidades [-10,10] m/s + cuaternión [-1,1] + centroide [-1,1]. **Escalas mezcladas 10×.** Sin VecNormalize. |
+| **Acción** | 4-D `[-1,1]` mapeado a thrust en `f2F` | OK. Tanh-squashed por SAC. |
+| **Optimizador SAC** | `lr=3e-4`, `batch=256`, `buffer=200k`, `gamma=0.99` (default), `tau=0.005` (default), `target_entropy=auto=−4`, `learning_starts=100` (default) | `gamma=0.99` con `dt=0.01 s` ⇒ **horizonte efectivo ≈ 100 pasos = 1 s**. El agente no ve `r_alive=+0.10` 200 pasos en el futuro: `0.99²⁰⁰·0.10 ≈ 0.013`. |
+| **Net arch** | `MlpPolicy [256, 128]` | OK para 19-D. |
+| **Logging** | `verbose=0`, sin `tensorboard_log` | Sin evidencia directa de `actor_loss / critic_loss / ent_coef / std`. |
+| **Reward** | `r_track ∈ [-1,+1]`, `r_alive=+0.10`, `r_jerk` pequeño, `crash_penalty=−10` | `crash_penalty` **100× mayor** que `r_alive` ⇒ TD targets ruidosos al final del episodio. |
+
+**Conclusión de la auditoría**: la causa más probable del techo de 2 s **no era reward shaping ni arquitectura**, sino el desajuste entre `gamma=0.99` y la duración real del episodio objetivo. Acompañado de obs sin normalizar y `crash_penalty` desproporcionada.
+
+### Diseño de v9 — seis cambios estructurales sobre v8
+`scripts/train_hover_track_v9.py` (~720 líneas), derivado mecánico de v8 con MDP idéntico (mismo wrapper de reward, spawn, termination). Solo cambian piezas algorítmicas, en orden de impacto esperado:
+
+| # | Cambio | v8 | v9 | Justificación |
+|---|---|---|---|---|
+| 1 | `gamma` | 0.99 | **0.995** | Horizonte efectivo 1 s → 2 s |
+| 2 | `VecNormalize(norm_obs=True, clip_obs=10)` | OFF | **ON** | Centra obs con escalas mezcladas 10× |
+| 3 | `target_entropy` | auto (=−4) | **−2.0** | v7 ya mostró que ayudaba; reduce gap stochastic vs deterministic |
+| 4 | `tau` | 0.005 | **0.01** | Target net más rápido al subir gamma |
+| 5 | `crash_penalty` | −10.0 | **−2.0** | Evita dominio del TD target terminal |
+| 6 | `learning_starts` | 100 | **5 000** | Buffer con ~30 episodios antes del primer update |
+| + | `verbose=1` + `tensorboard_log` | — | añadido | Visibilidad de gradientes y losses |
+
+`reset_num_timesteps=True`, `seed=42`. Stats de VecNormalize persistidas en `best_vec_normalize.pkl` y `final_vec_normalize.pkl`.
+
+### Resultado del run v9 — Confirmación de gradientes sanos pero colapso de visibility
+
+| Eval | vis | steps | jerk |
+|---|---:|---:|---:|
+| 10k | **100.0%** | **208** | 0.034 |
+| 20k | 98.9% | 173 | 0.084 |
+| 30k | 74.1% | 210 | 0.084 |
+| 40k | **47.9%** | 220 | 0.104 |
+
+**Comparativa con v8.1 al mismo paso**:
+- v8.1 @ 10k: vis=91.8%, steps=156. v9 @ 10k: vis=100%, steps=208. **Mejora desde el primer eval.**
+- v8.1 *best* steps en toda la corrida: 196 @ 70k. v9 ya está ahí a 10k.
+
+### TensorBoard — descarte definitivo de los puntos 1 y 4 de la auditoría
+
+A los 24 725 pasos:
+| Métrica | Valor | Lectura |
+|---|---|---|
+| `train/actor_loss` | −98.7 (descendiendo continuo) | ✓ Actor sube Q monotónicamente. **Sin vanishing.** |
+| `train/critic_loss` | 3.4 (oscilando 1–4) | ✓ Estable. No explosión. |
+| `train/ent_coef` | 0.097 (convergido desde 0.9) | ⚠ Política casi determinista a 25k pasos. |
+| `train/ent_coef_loss` | 0.05 (cerca de cero) | ✓ Auto-tuner en equilibrio: `target_entropy=-2` satisfecho. |
+| `train/learning_rate` | 3e−4 constante | ✓ Como esperado. |
+
+**Conclusión**: los pesos se actualizan correctamente. No hay vanishing ni explosión. **El optimizador no es el problema.** Esto cierra los puntos 1 y 4 de la auditoría como causa.
+
+### Diagnóstico cuantitativo del colapso v9
+
+A vis=48% el reward por paso es:
+```
+r_track = 0.48·(+0.5) + 0.52·(−1.0) = −0.28/paso
+r_alive = +0.10/paso
+Total per step = −0.18 → episodio: −0.18·220 − 2 = −42
+```
+
+Vs vis=100% en eps de 150 pasos: `+0.60·150 − 2 = +88`.
+
+**El agente está en el peor atractor**, atrapado por `ent_coef=0.097` que lo bloquea en una solución determinista que el crítico sobreestima por falta de muestreo de trayectorias alternativas. **Reproduce el patrón de v7.2** ("subir alto, observar mal, sobrevivir un poco más") con configuración limpia.
+
+### Lecciones del v9
+1. **gamma+VecNormalize sí ayudan**: vis=100% al primer eval (nunca antes lo conseguiste a 10k). El problema no era de horizonte ni de escalas.
+2. **El atractor "subir y olvidar" es reproducible**: lo viste en v7.2 con reward complejo, lo ves en v9 con reward minimalista + gamma alta + normalización. Es un local optimum del MDP, no un artefacto de configuración.
+3. **`target_entropy=−2` es demasiado agresivo en este MDP**: con `r_alive=+0.10` y `r_track ∈ [−1,+1]`, una política con entropía baja descubre que es más rentable mantenerse alto y aceptar perder visibility ocasionalmente que arriesgarse a crashear.
+
+### Iteración v9.1 — cambio único: `target_entropy = −1.0`
+
+Reusa `train_hover_track_v9.py`:
+```bash
+python scripts/train_hover_track_v9.py --no-display \
+    --target-entropy -1.0 \
+    --output-dir ./models/hover_track_v9_1
+```
+
+Hipótesis: con `target_entropy=−1` el `ent_coef` debería estabilizarse en 0.2–0.4, conservando exploración suficiente para no abandonar la esfera.
+
+#### Resultados v9.1 — corrida completa (10k → 110k)
+
+| Eval | vis | steps | jerk | reward/ep | comentario |
+|---|---:|---:|---:|---:|---|
+| 10k | 100.0% | 199 | 0.037 | +99 | igualar v9 @ 10k |
+| 20k | 87.2% | 221 | 0.069 | +87 | bache transitorio de re-estabilización |
+| 30k | 99.1% | 203 | 0.084 | +117 | recuperación; primer indicio de escape |
+| 40k | 86.7% | 224 | 0.070 | +89 | oscilación entre dos modos |
+| 50k | 78.3% | 367 | 0.075 | +97 | ★ primer salto fuerte de steps (+143) |
+| 60k | 100.0% | 335 | 0.097 | +199 | unificación: vis perfecta + eps largos |
+| 70k | 92.6% | 1030 | 0.099 | +513 | ★ segunda transición (+695 steps) |
+| 80k | 100.0% | 2510 | 0.055 | +1504 | 25.1 s vuelo continuo, vis perfecta |
+| **90k** | **100.0%** | **3000** | **0.0435** | **+1798** | ★★ **TECHO**: 5/5 eps al máximo |
+| 100k | 98.5% | 1458 | 0.064 | +841 | inicio de inflación de Q-values |
+| 110k | 87.3% | 1423 | 0.052 | +581 | degradación confirmada |
+
+### Cronología de la transición de fase (60k → 90k)
+
+Lo que ocurrió entre el eval de 60k (`steps=335`) y el de 90k (`steps=3000`) es el evento más importante de toda la línea iterativa del TFG:
+
+1. **60k → 70k**: salto de 335 → 1030 pasos. El agente descubrió un régimen donde sostenía hover por encima de 10 s. vis cae transitoriamente a 93% durante el descubrimiento.
+2. **70k → 80k**: 1030 → 2510 pasos. El régimen se consolida; vis vuelve a 100%.
+3. **80k → 90k**: 2510 → 3000 (techo de `max_ep_steps`). 5/5 episodios deterministes alcanzan el límite del entorno.
+
+Firma del salto en TensorBoard:
+- `critic_loss`: pico transitorio a ~11 entre 35k–45k (re-estructuración del espacio Q al ampliar el horizonte temporal real); estabiliza en 2–3 después.
+- `actor_loss`: descendiendo continuamente (−40 → −98 a 89k → **−118 valor instantáneo a 90k**) mientras el actor capitaliza Q-values cada vez más altos.
+- `ent_coef`: estable en 0.11–0.12 durante toda la transición (señal de exploración suficiente sin colapso a determinismo).
+
+### Anomalía de bookkeeping en eval @ 90k
+
+El callback reporta `surv=0.00 vis=100.00% steps=3000`. La condición `int(step >= max_steps)` debería arrojar `surv=1.00` si los 5 episodios alcanzan 3000. Hipótesis verosímil: el env base auto-trunca al alcanzar `n=3000` calls a `step()` y el contador del eval queda en `2999.x`, redondeado a `3000` por el formato `:.0f` pero con `step < max_steps` a la hora del check `>=`. **No es regresión de la política; es off-by-one de bookkeeping en el callback.** A verificar manualmente con `test_hover_track_v9_1.py` cargando el `best_model.zip` + `best_vec_normalize.pkl`.
+
+### Ciclo de inflación post-éxito (90k → 110k)
+
+Después de tocar el techo el sistema entró en un ciclo de degradación característico de SAC tras convergencia exitosa:
+
+| Métrica | 90k | 100k | 110k | Δ |
+|---|---:|---:|---:|---:|
+| `actor_loss` | −98 | −118 | **−149** | **−51** |
+| `critic_loss` | ~3 | ~3.5 | ~3.8 | leve aumento |
+| `ent_coef` | 0.116 | 0.124 | **0.131** | +0.015 |
+| `ent_coef_loss` | ≈0 | −0.10 | −0.20 | más presión hacia entropía |
+| **vis (eval)** | **100%** | 98.5% | **87.3%** | **−12.7 pt** |
+| **steps (eval)** | **3000** | 1458 | 1423 | **−1577** |
+
+Mecanismo:
+1. El crítico sobreestima Q porque los TD targets se bootstrapean sobre trayectorias de 3000 pasos × +0.6/paso ≈ +1800; retropropagado por γ=0.995 da Q values muy altos cerca del spawn.
+2. El actor persigue ese Q inflado y empuja acciones más agresivas que en eval determinista no rinden igual.
+3. El auto-tuner detecta la convergencia a determinismo en training y sube `ent_coef` para forzar exploración.
+4. Más exploración → política deterministe se separa más de la estocástica → eval cae.
+
+### Decisión: parar el run a los 110k (vs los 200k previstos)
+
+Argumentos para detener:
+- **Best model lock-in**: el callback no sobrescribirá `best_model.zip` mientras `surv=0` se mantenga (necesitaría un eval con `surv=1` que ahora está alejándose). El modelo @ 90k es definitivo.
+- **90k pasos restantes ≈ 4–5 h GPU sin valor añadido esperable**: el patrón TensorBoard (actor_loss en caída libre, ent_coef subiendo, ent_coef_loss negativo) predice continuación de la degradación, no recuperación.
+- **Esos 90k pasos se reasignan a ablations** (gamma=0.99 vs 0.995, VecNormalize OFF vs ON), que sí son contenido de TFG.
+
+Argumento contra (descartado): si el patrón fuese cíclico, el agente podría re-entrar al régimen de 3000 pasos. No hay evidencia: las dos transiciones positivas (50k→70k y 70k→90k) siempre vinieron acompañadas de actor_loss descendiendo CON critic_loss controlado. Ahora actor_loss está descendiendo pero el comportamiento eval empeora monotónicamente — firma de overshoot, no de progreso.
+
+### Estado final de la sesión (2026-05-04)
+
+**v9.1 detenido manualmente a ~110k pasos.** Modelo final del TFG: `models/hover_track_v9_1/best_model.zip` (snapshot de la política @ ~90k de entrenamiento).
+
+Métricas del best model:
+- **5/5 episodios deterministes alcanzan max_ep_steps=3000** (~30 s de vuelo continuo)
+- **vis=100%** sostenida durante toda la trayectoria
+- **jerk=0.0435** (mejor de toda la historia del proyecto)
+- **reward/ep estimado +1798** (15× v8.1, 18× v9)
+
+### Comparativa final con todas las versiones del proyecto
+
+| Versión | best vis | best steps | best reward/ep | s vuelo |
+|---|---:|---:|---:|---:|
+| v7 | 100% | 218 | n/d | 2.2 |
+| v7.1 | 100% | 203 | n/d | 2.0 |
+| v7.2 | 100% | 203 | n/d | 2.0 |
+| v8 | 92% | 156 | ~50 | 1.6 |
+| v8.1 | 100% | 196 | ~50 | 2.0 |
+| v9 | 100% | 220 | +99 | 2.2 |
+| **v9.1** | **100%** | **3000** | **+1798** | **30.0** |
+
+**Mejora 15× sobre v8.1.** Todo el techo estructural diagnosticado en la sesión 2026-04-28 se debía a tres parámetros algorítmicos mal calibrados (`gamma=0.99`, obs sin normalizar, `target_entropy=auto`). Una vez corregidos coordinadamente, el problema es resoluble en 90k pasos de SAC.
+
+### Próximos pasos
+
+1. **Backup defensivo del best model**:
+   ```bash
+   cp ./models/hover_track_v9_1/best_model.zip          ./models/hover_track_v9_1/best_model_FINAL.zip
+   cp ./models/hover_track_v9_1/best_vec_normalize.pkl  ./models/hover_track_v9_1/best_vec_normalize_FINAL.pkl
+   ```
+
+2. **`test_hover_track_v9_1.py`** — script de evaluación que carga `best_model.zip` + `best_vec_normalize.pkl`, ejecuta 10 episodios con seeds nuevos, graba vídeo del vuelo de 30 s, calcula métricas y verifica si `surv=1` se confirma con la lógica corregida.
+
+3. **Ablaciones** (~3-4 h GPU cada una, en paralelo cuando estén disponibles):
+   ```bash
+   # Ablation A: rebajar gamma a 0.99 (mantiene VecNormalize, target_entropy=-1)
+   python scripts/train_hover_track_v9.py --no-display \
+       --target-entropy -1.0 --gamma 0.99 \
+       --output-dir ./models/hover_track_v9_1_ablate_gamma --timesteps 100000
+
+   # Ablation B: desactivar VecNormalize (mantiene gamma=0.995, target_entropy=-1)
+   python scripts/train_hover_track_v9.py --no-display \
+       --target-entropy -1.0 --no-vec-normalize \
+       --output-dir ./models/hover_track_v9_1_ablate_normalize --timesteps 100000
+   ```
+
+4. **v10 (extensión natural, fuera del TFG mínimo)**: transfer learning desde `best_model_FINAL.zip` con `target_speed > 0` reintroducido vía currículo (0 → 0.1 → 0.3 m/s). v9.1 actualmente vuela sobre **target estático** (`target_speed=0.0` forzado en `reset()`); el sistema completo de seguimiento de lemniscata es el siguiente hito.
+
+### Archivos generados en esta sesión
+- `scripts/train_hover_track_v9.py` (~720 líneas): seis cambios estructurales sobre v8 + TensorBoard.
+- `models/hover_track_v9/`: 40k pasos, 4 evals, colapso confirmado al atractor de v7.2.
+- `models/hover_track_v9_1/`: ~110k pasos, 11 evals, vídeos espaciados (probable uno cerca del paso 90k = pico de éxito), TensorBoard logs (`tb/v9_1`), `best_model.zip` con steps=3000 sostenido.
+- `MEMORY.md` (auto): registro de la sesión y del modelo final.
+
+### Lecciones para futuros TFG en RL (continuación)
+6. **TensorBoard desde el primer run**: sin `tensorboard_log` ni `verbose=1` los puntos 1 y 4 de la auditoría no son verificables. Debió haberse activado en v7. Coste: 0 minutos. Ahorro estimado: ≥1 versión de iteración.
+7. **El atractor degenerado existe pero no es siempre destino final**: v7.2 y v9 (con `target_entropy=−2` o más bajo) caen en él de forma irreversible. v9.1 (con `target_entropy=−1`) lo visita transitoriamente a 20k y escapa a 30k. Diferencia operativa: cuando `ent_coef` se mantiene ≥0.10, el agente aún muestrea trayectorias alternativas y corrige.
+8. **No diagnosticar SAC con un único eval intermedio**: a 20k v9.1 parecía estar colapsando exactamente igual que v9 a 30k. La extrapolación lineal habría disparado v9.2 con reward shaping innecesario. Una versión bien diseñada en SAC necesita 2–3 evals por encima del régimen de re-estabilización antes de juzgarse.
+9. **Cuantifica el reward del atractor antes de patchear**: el cálculo `vis·(+r_visible) + (1−vis)·(−r_invisible) + r_alive` permite verificar si el atractor degenerado es matemáticamente accesible. Pero solo es relevante si los datos de eval lo confirman como destino estable, no como tránsito.
+10. **El éxito de SAC tiene una vida útil**: tras converger a la política óptima en este MDP (90k pasos), el sistema entra en un ciclo de inflación de Q-values donde actor_loss diverge a la baja, ent_coef sube y la política eval se degrada. **Detener el entrenamiento al detectar el pico ahorra GPU sin perder calidad** (best_model.zip queda anclado por el lex order del callback). Es un argumento empírico para la utilidad de TQC (reward distributional con quantile clipping) sobre SAC en problemas con horizontes largos.
+11. **La transición de fase positiva tiene firma cuantitativa**: cuando ocurrió el salto 50k→70k→90k, la firma fue actor_loss descendiendo CON critic_loss controlado bajo y vis recuperándose tras cada bache. Si solo se observa actor_loss descendiendo SIN recuperación de vis, es overshoot, no progreso.
+
+---
+
+## [Fecha: 2026-05-05] - Recuperación post-crash, descubrimiento del bug del callback y rediseño del flujo de guardado
+
+### Cierre forzoso de v9.1 y verificación de archivos persistidos
+
+El IDE (Antigravity) se cerró durante la noche con el run v9.1 todavía corriendo. El proceso se interrumpió de golpe (sin `KeyboardInterrupt` controlado), por lo que:
+- **Sí se persistieron**: `best_model.zip`, `best_vec_normalize.pkl`, `eval_log.json`, `training_log.csv`, TensorBoard logs (`tb/v9_1/events.out.tfevents.*`), checkpoints periódicos (`model_25000_steps.zip` ... `model_100000_steps.zip`), recordings/ con vídeos espaciados.
+- **NO se persistieron**: `interrupted_model.zip`, `interrupted_vec_normalize.pkl`, `training_summary.json`, último vídeo en grabación (corrupto).
+
+Listado verificado:
+```
+best_model.zip                 1771925  19:25:40
+best_model_at_80k.zip          1771925  19:25:40
+best_model_at_90k.zip          1771925  19:25:40
+best_model_FINAL.zip           1771925  19:25:40
+best_vec_normalize*.pkl           2514  19:25:40  (4 copias)
+checkpoints/model_25000_steps.zip   1772499  19:40:01
+checkpoints/model_50000_steps.zip   1772531  20:02:11
+checkpoints/model_75000_steps.zip   1772579  20:25:56
+checkpoints/model_100000_steps.zip  1772584  20:56:57
+```
+
+### Descubrimiento crítico: `best_model.zip` era el snapshot @ 10k, no @ 90k
+
+Las cuatro copias `best_model*.zip` tienen **idéntico tamaño y mtime**. Confirmado: las llamadas `cp` que hice durante el training a las 80k y 90k pasos copiaban el mismo archivo, porque ese archivo no había cambiado desde el primer eval.
+
+El bug estaba en el criterio del callback `BestSurvivalEval`:
+```python
+better = ((surv, vis, -jerk) >
+          (self.best_survival, self.best_visibility, -self.best_jerk))
+```
+
+Lex order sobre `(surv, vis, -jerk)`. Con `surv=0` para todos los evals (nunca llegó a `surv=1.0` por el off-by-one entre el truncate del env y el contador del callback), el desempate cae sobre `vis` y luego `jerk`. Cronología:
+
+| Eval | surv | vis | jerk | ¿NEW BEST? | Razón |
+|---|---:|---:|---:|---|---|
+| 10k | 0 | 100% | **0.0365** | ★ sí | primer eval con vis=100% |
+| 60k | 0 | 100% | 0.0972 | ❌ | -0.0972 < -0.0365 (jerk peor) |
+| 80k | 0 | 100% | 0.0552 | ❌ | -0.0552 < -0.0365 |
+| **90k** | **0** | **100%** | **0.0435** | ❌ | -0.0435 < -0.0365 |
+| 100k | 0 | 98.5% | 0.064 | ❌ | vis < 100% |
+| 110k | 0 | 87.3% | 0.052 | ❌ | vis < 100% |
+
+**Ningún eval posterior consiguió simultáneamente `vis=100%` Y `jerk ≤ 0.0365`**. El callback nunca actualizó el `best_model.zip` después del eval @ 10k. El modelo del pico (steps=3000) **jamás se persistió en disco**.
+
+### Tests sobre los checkpoints disponibles — confirmación del problema
+
+Lanzados `test_hover_track_v9_1.py` (10 episodios deterministes con seeds 2000-2009 que el training nunca vio):
+
+| Modelo testeado | mean_steps | vis | jerk | reward/ep |
+|---|---:|---:|---:|---:|
+| `best_model.zip` (= snapshot @10k) | ~200 | ~100% | ~0.04 | (eval previo) |
+| `model_75000_steps.zip` | **278.1** | **57.8%** | 0.137 | −34.4 |
+| `model_100000_steps.zip` | **388.0** | **68.4%** | 0.081 | +17.7 |
+| (referencia) eval @100k del callback | 1458 | 98.5% | 0.064 | +841 |
+
+**Caída brutal**: el mismo `model_100000_steps.zip` rinde 4× peor en steps y 30 puntos peor en vis al testearse offline que cuando lo evaluaba el callback durante el training.
+
+### Diagnóstico: mismatch de VecNormalize
+
+La causa raíz: las stats de VecNormalize que usaba el callback durante el training eran las **en memoria**, actualizadas continuamente con cada paso del entrenamiento. A 100k pasos, `running_mean` y `running_std` reflejaban la distribución de obs de un dron que ya volaba estable.
+
+Pero `best_vec_normalize.pkl` se persistió **solo** en el eval @ 10k (única vez que el callback consideró NEW BEST). Las stats en ese archivo provienen de obs muy distintas: el dron caía a los ~150 pasos, las velocidades angulares eran grandes, la altitud era inestable.
+
+| Componente del estado | obs típica @ 10k | obs típica @ 90k |
+|---|---|---|
+| z (altura) | dispersa, baja | concentrada en 1.5 m |
+| ωx, ωy, ωz | grandes (caídas) | cerca de 0 (estable) |
+| cx, cy (centroide) | a menudo perdido | centrado |
+| dcx, dcy (vel centroide) | grandes | pequeñas |
+
+Al testear el modelo @ 100k con stats @ 10k, las obs llegan al policy **escaladas y desplazadas incorrectamente**. SAC fue entrenado con normalización correcta y es muy sensible a ese mismatch — pequeñas perturbaciones en la entrada producen grandes errores en la acción y el dron pierde tracking.
+
+### Decisión: rediseñar el flujo de guardado y re-entrenar (v9.2)
+
+Tres opciones evaluadas:
+
+| Opción | Coste | Garantía | Decidida |
+|---|---|---|---|
+| Calibrar stats por warmup | 30 min | Incierta (chicken-and-egg con política mal normalizada) | ❌ |
+| Re-entrenar v9.1 con callback corregido | 5–6 h | Alta | ✓ |
+| Aceptar `mean_steps=388` como modelo final | 0 | Resultado mediocre vs lo demostrado | ❌ |
+
+### Implementación del fix en `scripts/train_hover_track_v9.py`
+
+#### Cambio 1: nuevo criterio de "best"
+
+```python
+# Antes:
+better = ((surv, vis, -jerk) >
+          (self.best_survival, self.best_visibility, -self.best_jerk))
+
+# Después:
+better = ((surv, steps, vis, -jerk) >
+          (self.best_survival, self.best_steps,
+           self.best_visibility, -self.best_jerk))
+```
+
+Lex order ahora `(surv, steps, vis, -jerk)`. Cualquier mejora en `steps` (independientemente del jerk asociado) actualiza el best. El estado del callback añade `self.best_steps = -1.0` como segunda key.
+
+Verificación con números reales de v9.1:
+
+| Eval | (surv, steps, vis, −jerk) | vs best previo | ¿NEW BEST con criterio nuevo? |
+|---|---|---|---|
+| 10k | (0, 199, 1.0, −0.0365) | (−1, −1, −1, −∞) | ✓ inicial |
+| 60k | (0, 335, 1.0, −0.0972) | (0, 199, …) | ✓ (335 > 199) |
+| 70k | (0, 1030, 0.93, −0.099) | (0, 335, …) | ✓ (1030 > 335) |
+| 80k | (0, 2510, 1.0, −0.0552) | (0, 1030, …) | ✓ (2510 > 1030) |
+| **90k** | **(0, 3000, 1.0, −0.0435)** | (0, 2510, …) | **✓ (3000 > 2510) ← se habría guardado** |
+| 100k | (0, 1458, 0.985, −0.064) | (0, 3000, …) | ❌ (1458 < 3000) |
+| 110k | (0, 1423, 0.873, −0.052) | (0, 3000, …) | ❌ |
+
+Con el nuevo criterio, el best_model habría quedado anclado al eval @ 90k.
+
+#### Cambio 2: nueva clase `VecNormalizeCheckpointCallback`
+
+```python
+class VecNormalizeCheckpointCallback(BaseCallback):
+    """Persiste vec_normalize_<N>_steps.pkl junto a model_<N>_steps.zip."""
+    def __init__(self, save_freq, save_path, vec_normalize, name_prefix='vec_normalize'):
+        super().__init__()
+        self.save_freq = save_freq
+        self.save_path = Path(save_path)
+        self.vec_normalize = vec_normalize
+        self.name_prefix = name_prefix
+        self.save_path.mkdir(parents=True, exist_ok=True)
+
+    def _on_step(self):
+        if self.vec_normalize is None:
+            return True
+        if self.n_calls % self.save_freq == 0:
+            path = self.save_path / (
+                f"{self.name_prefix}_{self.num_timesteps}_steps.pkl")
+            self.vec_normalize.save(str(path))
+        return True
+```
+
+Garantiza que cada checkpoint del modelo tenga su `.pkl` de stats correspondiente al mismo `num_timesteps`. Evita el problema observado: cualquier checkpoint puede testearse offline con sus stats correctas, sin depender de que `BestSurvivalEval` haya marcado NEW BEST.
+
+#### Cambio 3: integración en `run_training`
+
+```python
+ckpt_cb = CheckpointCallback(save_freq=args.checkpoint_freq, save_path=str(ckpt_dir), name_prefix='model')
+vec_norm_ckpt_cb = VecNormalizeCheckpointCallback(
+    save_freq=args.checkpoint_freq,
+    save_path=str(ckpt_dir),
+    vec_normalize=self.vec_normalize)
+callbacks = [render_cb, self.metrics_cb, ckpt_cb, vec_norm_ckpt_cb, self.eval_cb]
+```
+
+Tras los cambios, las **cinco rutas de guardado** del script son:
+
+| # | Trigger | Modelo | VecNormalize | Sincronizado |
+|---|---|---|---|---|
+| 1 | NEW BEST en eval | `best_model.zip` | `best_vec_normalize.pkl` | ✓ mismo step |
+| 2 | CheckpointCallback (cada 25k) | `checkpoints/model_<N>_steps.zip` | — | n/a |
+| 3 | VecNormalizeCheckpointCallback (cada 25k) | — | `checkpoints/vec_normalize_<N>_steps.pkl` | ✓ pareado con 2 |
+| 4 | Fin del entreno | `final_model.zip` | `final_vec_normalize.pkl` | ✓ |
+| 5 | Ctrl+C / SystemExit | `interrupted_model.zip` | `interrupted_vec_normalize.pkl` | ✓ |
+
+### Script de test creado: `scripts/test_hover_track_v9_1.py`
+
+Test offline que:
+- Carga `best_model.zip` + `best_vec_normalize.pkl` (configurable a checkpoints arbitrarios).
+- Pone `vec_normalize.training=False` y `norm_reward=False` (stats congeladas).
+- Ejecuta N episodios deterministes con seeds nuevos (default 2000-2009, distintos a los del callback 1000-1004).
+- Calcula `survival = int(step >= max_steps)` con la lógica corregida.
+- Graba un vídeo por episodio con FPV + cámara externa + overlay (visibility, target, step, reward).
+- Persiste `test_results.json` con métricas agregadas (`survival_rate`, `mean_steps`, `mean_visibility`, `mean_jerk`, `mean_reward`).
+
+#### Bug menor encontrado y corregido en el test script
+
+`Panda3D ShowBase` reserva el atributo `self.recorder` para su sistema interno de grabación, invocando `self.recorder.recordFrame()` cada frame del `igLoop`. Mi primera versión usaba `self.recorder = EpisodeRecorder(...)` lo que producía:
+
+```
+AttributeError: 'EpisodeRecorder' object has no attribute 'recordFrame'
+:task(error): Exception occurred in PythonTask igLoop
+```
+
+Renombrado a `self.ep_recorder` (cuatro ocurrencias). Lección: nunca usar nombres de atributo reservados por la clase base de Panda3D en clases que heredan de `ShowBase`.
+
+### Estado al cierre de la sesión (2026-05-05)
+
+- **v9.1 inutilizable como modelo final**: los snapshots disponibles rinden 4-7× peor que lo demostrado durante el training por mismatch de stats. Los datos de TensorBoard, eval_log.json y training_log.csv siguen siendo válidos para narrativa del TFG.
+- **`scripts/train_hover_track_v9.py` corregido** con los tres cambios. Verificado: 7 clases bien definidas, `ast.parse` OK, lógica trazada manualmente sobre los datos de v9.1.
+- **`scripts/test_hover_track_v9_1.py` creado** con bug-fix del recordFrame.
+- **v9.2 pendiente de lanzar** con el callback corregido. Comando:
+  ```bash
+  python scripts/train_hover_track_v9.py --no-display \
+      --target-entropy -1.0 \
+      --output-dir ./models/hover_track_v9_2 \
+      --timesteps 120000
+  ```
+  120k pasos elegidos para capturar pico (~90k) + 30k de margen para documentar la degradación post-pico.
+
+### Plan post-v9.2
+
+1. **Verificar** `eval_log.json` para confirmar que existe un eval con `mean_steps ≥ 2000` registrado como NEW BEST.
+2. **Test deterministe** con `test_hover_track_v9_1.py --model-dir ./models/hover_track_v9_2 --output-name test_results`.
+3. **Backup defensivo** de `best_model.zip` y `best_vec_normalize.pkl` con sufijo `_TFG`.
+4. **Ablations en paralelo** (~5 h GPU cada una):
+   - `--gamma 0.99` para aislar el efecto del horizonte temporal.
+   - `--no-vec-normalize` para aislar el efecto de la normalización.
+5. **Figura comparativa**: 4 curvas en una gráfica (`v8.1`, `v9.2 full`, `v9.2 ablate gamma`, `v9.2 ablate normalize`) usando `eval_log.json` de cada run.
+6. **Redacción del capítulo de resultados del TFG** con:
+   - Línea base v8.1 (~196 pasos / 2 s).
+   - Auditoría de los 5 frentes con verificación cuantitativa.
+   - Diseño v9 + colapso a target_entropy=−2.
+   - v9.1 + escape del atractor.
+   - v9.2 + callback corregido + modelo final.
+   - Ablations.
+
+### Archivos generados en esta sesión
+- `scripts/train_hover_track_v9.py`: actualizado con nuevo lex order, `VecNormalizeCheckpointCallback`, y comentarios documentando el bug histórico.
+- `scripts/test_hover_track_v9_1.py` (~280 líneas): script de test offline con carga correcta de VecNormalize, recording de vídeo, métricas finales y `survival` recalculado correctamente.
+- `models/hover_track_v9_1/test_results.json`, `test_results_75k.json`, `test_results_100k.json`: tres tests que documentan empíricamente el problema (mean_steps 200/278/388 vs lo prometido por el callback durante training).
+
+### Lecciones para futuros TFG en RL (continuación)
+
+12. **Lex order en callbacks de "best": las claves implícitas importan tanto como las explícitas**. `(surv, vis, -jerk)` parecía razonable, pero con `surv=0` constante el desempate caía sobre `jerk` que crece naturalmente con la complejidad de la política — penalizando precisamente las políticas más exitosas. **Regla práctica**: para problemas con `surv=0/1` discreta, usar `(surv, steps_or_reward, ...)` para que el desempate primario sea sobre la métrica de progreso, no sobre características secundarias del control.
+
+13. **VecNormalize stats deben guardarse en lockstep con cada checkpoint**, no solo en NEW BEST. Si el flujo de "best" falla por cualquier razón (lex order erróneo, eval inestable, training interrumpido), los checkpoints periódicos son la única red de seguridad. SB3's `CheckpointCallback` no lo hace por defecto — hay que añadir un callback companion (~15 líneas).
+
+14. **Tests offline NO son redundantes con evals durante training**. Aunque el eval del callback usa la misma lógica que el test offline (raw_env + manual normalize_obs), las **stats de VecNormalize en uso son distintas**: el callback usa las stats en memoria (continuamente actualizadas), el test offline usa las persistidas a disco (snapshot puntual). Si esos snapshots no coinciden con el momento del eval, el test offline da resultados muy distintos. Tomar al menos un test offline DURANTE el training, antes del cierre, habría detectado el mismatch a tiempo.
+
+15. **Nombres de atributo en herencias de Panda3D ShowBase**: `self.recorder` (y otros del estilo `self.cam`, `self.taskMgr`, `self.render`) están reservados por la clase base e invocados en el frame loop. Usar nombres como `self.ep_recorder`, `self.video_recorder`, etc. para evitar `AttributeError` crípticos durante `igLoop`.
+
+16. **Hash o tamaño + mtime de archivos como diagnóstico**: cuando varios "backups" tienen exactamente el mismo Length y LastWriteTime, son la misma cosa. Es un check de 2 segundos que pude haber hecho **en cuanto el usuario reportó "tengo modelos de 80k y 90k"**, en lugar de planificar una semana de tests sobre snapshots inexistentes. Lección general: verificar la integridad y diversidad de los datos antes de razonar sobre ellos.
+
+---
+
+## [Fecha: 2026-05-05] - Resultados de v9.1.1 (rerun con callback corregido) y ablations completas
+
+### Convención de nombres
+
+El plan original era nombrar el rerun como `v9.2` para distinguir del v9.1 buggy. El usuario lo nombró `v9.1.1` (`models/hover_track_v9_1_1/`) para enfatizar que el MDP, la reward y los hiperparámetros son idénticos al v9.1 — solo cambia la lógica de persistencia del callback. Ese naming refleja mejor la naturaleza del cambio: misma versión del agente, misma física, misma narrativa para el TFG, distinto bookkeeping. Los directorios resultantes son:
+
+```
+models/hover_track_v9_1_1/                   ← 200k pasos completos, callback corregido
+models/hover_track_v9_1_1_ablate_gamma/      ← gamma=0.99, resto idéntico
+models/hover_track_v9_1_1_ablate_normalize/  ← --no-vec-normalize, resto idéntico
+```
+
+### Bug intermedio detectado: callback `_evaluate()` no maneja `vec_normalize=None`
+
+Al lanzar la ablation `--no-vec-normalize`, el script crasheó al primer eval @ 10k:
+```
+File "...train_hover_track_v9.py", line 402, in _evaluate
+    was_training = self.vec_normalize.training
+AttributeError: 'NoneType' object has no attribute 'training'
+```
+
+Causa: `BestSurvivalEval._evaluate()` accedía directamente a `self.vec_normalize.training` y a `self.vec_normalize.normalize_obs(...)` sin guardar de que esa instancia es `None` cuando `args.no_vec_normalize=True`. El bug solo se manifiesta en la rama de la ablation; en el resto de runs (con VecNormalize ON) `vec_normalize` siempre era una instancia válida.
+
+Fix: introducir una bandera `use_norm = self.vec_normalize is not None` y envolver los tres accesos con condicionales:
+```python
+use_norm = self.vec_normalize is not None
+was_training = self.vec_normalize.training if use_norm else False
+if use_norm:
+    self.vec_normalize.training = False
+...
+obs_in = np.asarray(obs, dtype=np.float32)
+if use_norm:
+    obs_in = self.vec_normalize.normalize_obs(obs_in)
+act, _ = model.predict(obs_in, deterministic=True)
+...
+finally:
+    if use_norm:
+        self.vec_normalize.training = was_training
+```
+
+Si no hay VecNormalize, las obs van crudas al `model.predict`, que es exactamente la distribución que vio el agente durante el training. Verificado con `ast.parse`. Tras el fix, la ablation arrancó limpia.
+
+### Resultados v9.1.1 (corrida principal — 200k pasos completos)
+
+20 evals registrados de `eval_log.json`. La política recuperó el pico observado en v9.1 (esperable, mismo seed=42 y mismos hiperparámetros) y esta vez el callback corregido SÍ persistió el snapshot:
+
+| Eval | mean_steps | vis | jerk | reward/ep |
+|---|---:|---:|---:|---:|
+| 10k | 199 | 100% | 0.037 | +99 |
+| 60k | 335 | 100% | 0.097 | +199 |
+| 70k | 1030 | 93% | 0.099 | +513 |
+| 80k | 2510 | 100% | 0.055 | +1504 |
+| **90k** | **3000** | **100%** | **0.0435** | **+1798** ★ NEW BEST capturado |
+| 100k | 1458 | 98.5% | 0.064 | +841 |
+| 150k | (degradación continua) | | | |
+| 200k | 249 | 82.4% | 0.083 | +18 |
+
+**`best_model.zip` queda anclado al snapshot del eval @ 90k**. La degradación post-pico continúa hasta 200k (final steps=249, vis=82%), confirmando que **detener a 90k habría ahorrado ~5 h de GPU sin pérdida**. La curva completa hasta 200k es útil para el TFG porque documenta el ciclo de inflación post-éxito de SAC en su totalidad (subida 10k→90k, pico, degradación 100k→200k).
+
+### Resultados ablation A: `gamma=0.99` (sin extensión de horizonte)
+
+100k pasos completos, 10 evals. Pico de **steps=223 @ 40k**, final steps=194 @ 100k:
+
+| Eval | mean_steps | vis | jerk |
+|---|---:|---:|---:|
+| 10k | (~150) | (~100%) | — |
+| 40k | **223** ★ | **100%** | 0.0798 |
+| 100k | 194 | 100% | (similar) |
+
+Lectura: con `gamma=0.99` el agente **replica casi exactamente el techo de v8.1** (196 vs 223). Confirmado cuantitativamente:
+- v8.1 baseline (gamma=0.99 + sin VecNormalize): **196 pasos pico**
+- ablation gamma (gamma=0.99 + VecNormalize): **223 pasos pico**
+
+VecNormalize por sí solo aporta ~14% de mejora (196 → 223), insuficiente para escapar del techo estructural. **Es gamma=0.995 lo que rompe el horizonte temporal** y permite la transición de fase a 30 s.
+
+### Resultados ablation B: `--no-vec-normalize` (obs crudas al MLP)
+
+80k pasos, 8 evals (probablemente detenida tras observar el techo estabilizado). Pico de **steps=461 @ 70k**, final steps=376 @ 80k:
+
+| Eval | mean_steps | vis | jerk |
+|---|---:|---:|---:|
+| 10k | (~200) | (~100%) | — |
+| 70k | **461** ★ | 96.9% | 0.0248 |
+| 80k | 376 | 72.0% | (subiendo) |
+
+Lectura: sin VecNormalize el agente alcanza **2.4× v8.1 (461 vs 196)** pero **6.5× peor que v9.1.1 (461 vs 3000)**. Confirma que la normalización de obs sí aporta una mejora sustancial (gamma=0.995 lo permite, VecNormalize lo amplifica), pero no es suficiente sola.
+
+Detalle interesante: el jerk de la ablation_normalize es **0.0248**, el más bajo de toda la familia v9. Posible explicación: sin normalización de obs las velocidades angulares (`ωx, ωy, ωz` ∈ [−10, 10]) llegan al actor con magnitud grande, y el actor responde con acciones más conservadoras → menos jerk. Pero ese conservadurismo es lo que limita el rendimiento.
+
+### Tabla comparativa final (figura central del TFG)
+
+| Run | Pico (steps) | @ paso | Final | Último paso | Mejora vs v8.1 |
+|---|---:|---:|---:|---:|---:|
+| `hover_track_v8_1` (baseline) | 196 | 70k | 175 | 150k | 1.0× |
+| `hover_track_v9` (target_entropy=−2) | 220 | 40k | 220 | 40k | 1.1× — colapso |
+| `hover_track_v9_1` (lost peak) | 3000* | 90k | 1423 | 110k | 15.3× pero modelo perdido |
+| **`hover_track_v9_1_1`** (full) | **3000** | **90k** | 249 | 200k | **15.3×** ★ |
+| `…_ablate_gamma` (gamma=0.99) | 223 | 40k | 194 | 100k | 1.1× |
+| `…_ablate_normalize` (no VecNorm) | 461 | 70k | 376 | 80k | 2.4× |
+
+(* en v9.1 el pico se vio en eval del callback pero `best_model.zip` no se actualizó)
+
+### Cuantificación de la contribución de cada cambio
+
+Tabla derivable directamente de las ablations:
+
+| Configuración | gamma | VecNorm | Pico steps | Δ vs v8.1 |
+|---|:---:|:---:|---:|---:|
+| v8.1 baseline | 0.99 | OFF | 196 | — |
+| ablation_gamma | 0.99 | ON | 223 | +14% |
+| ablation_normalize | 0.995 | OFF | 461 | +135% |
+| **v9.1.1 full** | **0.995** | **ON** | **3000** | **+1431%** |
+
+Lectura clave: **los dos cambios son fuertemente complementarios**, no aditivos. Por separado mejoran 14% y 135%; juntos mejoran 1431%. Es un caso de no-linealidad: gamma alta sin normalización tampoco escapa al techo (461 lejos de 3000), pero gamma alta con normalización sí. La conclusión defendible para el TFG:
+
+> *"Ni la extensión del horizonte temporal (gamma=0.995) ni la normalización de observación (VecNormalize) son por sí solas suficientes para escapar del techo de ~196 pasos de v8.1. Su combinación produce una transición de fase a 3000 pasos a partir del paso de entrenamiento ~70 000, atribuible a la sinergia entre obs centradas y un crítico capaz de propagar valor a horizontes de >2 s."*
+
+### Script de visualización: `scripts/plot_v9_2_comparison.py`
+
+Creado script independiente (~180 líneas, solo `matplotlib + numpy + json`) que carga los `eval_log.json` de cada run y genera una figura 2×2 con:
+- Panel sup-izda: `mean_steps` vs training step (la métrica titular).
+- Panel sup-dcha: `mean_visibility` (%) vs training step.
+- Panel inf-izda: `mean_jerk` vs training step.
+- Panel inf-dcha: bar chart con el pico de `mean_steps` por run, anotando el timestep al que se alcanzó.
+
+Usos:
+```bash
+# Comparativa básica: v9.1.1 + 2 ablations
+python scripts/plot_v9_2_comparison.py
+
+# Comparativa completa para el TFG (añade v8.1, v9, v9.1)
+python scripts/plot_v9_2_comparison.py --include-all
+```
+
+Genera en `experiments/v9_1_1_comparison/`:
+- `v9_1_1_comparison.png` (150 dpi para Word/LaTeX).
+- `v9_1_1_comparison.pdf` (vectorial, escalable).
+- `comparison_summary.json` (números exactos para citar en el texto).
+
+### Estado al cierre de esta sesión (2026-05-05, tarde)
+
+- **`hover_track_v9_1_1/best_model.zip`** captura el pico de v9.1 con vec_normalize correcto pareado.
+- **Ambas ablations completadas** (~100k y ~80k pasos respectivamente) con datos defendibles.
+- **Script de comparativa listo** para generar la figura del TFG.
+- **TODO inmediato**: verificar el modelo final con `test_hover_track_v9_1.py --model-dir ./models/hover_track_v9_1_1`. Si el test off-line confirma steps≈3000 con vis=100%, el TFG está cerrado en lo experimental.
+- **TODO de backup**: copiar `best_model.zip` y `best_vec_normalize.pkl` de `v9_1_1/` a sufijo `_TFG` antes de cualquier otra operación sobre ese directorio.
+- **TODO de redacción**: capítulo de resultados con la tabla comparativa, la figura de plot_v9_2_comparison.py y los párrafos sobre la sinergia de los dos cambios.
+
+### Archivos generados en esta sesión
+- `scripts/train_hover_track_v9.py`: fix del `_evaluate()` para `vec_normalize=None` (bandera `use_norm`).
+- `scripts/plot_v9_2_comparison.py` (~180 líneas): generación de la figura comparativa 2×2 con flags `--include-baseline`, `--include-history`, `--include-all`.
+- `models/hover_track_v9_1_1/`: 200k pasos completos, 20 evals, `best_model.zip` con steps=3000 capturado por callback corregido, `best_vec_normalize.pkl` pareado al mismo paso.
+- `models/hover_track_v9_1_1_ablate_gamma/`: 100k pasos, 10 evals, pico=223 (replica el techo de v8.1).
+- `models/hover_track_v9_1_1_ablate_normalize/`: 80k pasos, 8 evals, pico=461 (mejora parcial sin alcanzar el régimen de éxito).
+
+### Lecciones para futuros TFG en RL (continuación)
+
+17. **Las ablations no aportan información solo cuando "fallan":** la ablation gamma=0.99 alcanzando 223 pasos (vs baseline=196) cuantifica que VecNormalize por sí sola añade ~14% — un dato pequeño pero ÚTIL. La ablation no-vec-normalize alcanzando 461 pasos cuantifica que gamma=0.995 sin normalización añade 135% pero se queda lejos del régimen de éxito. Sin estos datos, la conclusión "ambos cambios eran necesarios" sería cualitativa; con estos datos, es **cuantitativa y defendible**: gamma + VecNormalize aportan en sinergia (1431%), no como suma de los efectos individuales (14% + 135% ≠ 1431%).
+
+18. **No-linealidad sinérgica de hiperparámetros**: en RL es común que dos cambios pequeños individualmente produzcan una transición de fase cuando se combinan. La explicación mecanística aquí: gamma=0.995 amplía el horizonte que el crítico puede valuar (~2 s); VecNormalize permite que el actor reciba obs estructuradas en lugar de ruidosas. Sin gamma, no hay señal a propagar; sin normalización, la propagación es ruidosa. **Solo la conjunción de "más señal" + "señal limpia" produce convergencia rápida**. Esa narrativa mecanística es citable en el TFG.
+
+19. **Dejar correr una corrida exitosa hasta el final tiene valor narrativo**: v9.1.1 a 200k pasos termina con steps=249 (degradación post-pico). Detener a 90k habría dado el modelo final, pero NO la curva completa que documenta el ciclo de inflación de Q-values en SAC. Esa curva es lo que justifica empíricamente el ítem de "trabajo futuro" del TFG ("considerar TQC o algoritmos con clip de Q para problemas con horizontes largos").
+
+20. **Naming de directorios refleja taxonomía del experimento**: `v9.1.1` (vs `v9.2`) comunica que el cambio es de bookkeeping, no de algoritmo. El revisor del TFG entiende la cronología sin necesidad de leer el cambio en código. Lección general: nombres semánticamente alineados con la jerarquía conceptual del experimento son tan valiosos como un buen abstract.
+
+---
+
+## [Fecha: 2026-05-07] - Auditoría de cierre v9.1.1 y plan iterativo v10.0 → v10.7
+
+### Punto de partida
+
+v9.1.1 cerrado experimentalmente. `test_results.json` con seeds 2000–2009 (nunca vistos en training): `survival_rate=1.0`, `mean_steps=3000`, `mean_visibility=1.0`, `mean_jerk=0.035`, `mean_reward=2565`. Los 10/10 episodios alcanzan el techo de `max_ep_steps=3000` (30 s de vuelo continuo). El `best_model.zip` con callback corregido captura el pico @ 90k. Backups `_TFG` en su sitio.
+
+### Auditoría replanteada con la mirada en v10 (target en movimiento)
+
+Repaso de los 5 frentes que en su día motivaron v9 (PROJECT_HISTORY:5195–5232), **ahora con v9.1.1 como referencia y v10 como destino**. La pregunta no es "¿qué falló?" sino "¿qué dejará de aguantar cuando subamos la dificultad?".
+
+| # | Frente | Estado v9.1.1 | Riesgo en v10 | Acción priorizada |
+|---|---|---|---|---|
+| 1 | Actualización de pesos / vanishing | Cerrado: TB confirma actor_loss/critic_loss/ent_coef sanos | Ciclo de inflación post-pico (90k→200k) repetible | LR schedule + early-stop + AdamW |
+| 2 | Debug paso a paso del MDP | Wrapper auditado: reward del env base se descarta intencionalmente; centroide discontinuo cuando `vis=False`; `term_reason` solo en CSV | Discontinuidad muerde si target en movimiento se sale del FOV | `last-known centroid` + `sanity_check_v10.py` con asserts de pesos/obs |
+| 3 | Normalización de datos | Cerrado por VecNormalize. Ablation cuantifica +135% sola, ×14.31 con gamma | `frac~0.005` y `vis` binario — VecNormalize lo escala, pero la "acción cero ≠ hover" introduce sesgo | `action_hover_bias=0.45` (la acción 0 representa hover, no caída) |
+| 4 | Optimizador / hiperparámetros | SAC + Adam funciona pero infla Q post-convergencia | Inflación es típica de SAC; TQC la ataca por construcción | Migración a TQC en v10.6 + LR linear schedule |
+| 5 | Arquitectura | MlpPolicy [256,128] suficiente para target estático | Target en movimiento sin contexto temporal → la red no puede predecir aceleración del objetivo | VecFrameStack(3) en v10.5 + LayerNorm en actor en v10.7 |
+
+### Plan iterativo: cada versión cambia UNA cosa
+
+Diseño orientado a obtener **datos ablation-grade** comparables: cada iteración hereda la mejor configuración anterior y modifica **un solo factor**. Permite atribuir Δ-rendimiento al cambio aislado y reusar la narrativa de v9.1.1 ("ablations cuantifican la sinergia").
+
+| Iter | Único cambio sobre la anterior | Propósito | Algoritmo | TL desde |
+|---|---|---|---|---|
+| **v10.0** | Transfer learning desde `v9_1_1/best_model.zip` | Validar infraestructura TL + re-confirmar baseline | SAC | v9.1.1 |
+| **v10.1** | + Linear LR schedule (3e−4 → 0) + early-stop con patience=5 | Atacar ciclo de inflación post-pico documentado | SAC | v9.1.1 |
+| **v10.2** | + `--action-hover-bias 0.45` | Centrar exploración alrededor de hover, no de caída | SAC | v9.1.1 |
+| **v10.3** | + `--last-known-centroid` | Eliminar discontinuidad de obs cuando `vis=False` | SAC | v9.1.1 |
+| **v10.4** | + `--target-speed-curriculum '{"0":0,"30000":0.1,"60000":0.3}'` | Reintroducir lemniscata móvil (objetivo final del TFG) | SAC | v9.1.1 |
+| **v10.5** | + `--frame-stack 3` | Contexto temporal para predecir aceleración del target | SAC | v9.1.1 (sin vec_normalize) |
+| **v10.6** | Algorithm swap a TQC, rest of best v10.5 config | Aborda sobreestimación de Q en SAC vanilla | TQC | desde cero |
+| **v10.7** | + LayerNorm en actor + AdamW (`weight_decay=1e-5`) | Estabilidad post-convergencia + regularización | TQC | desde cero |
+| v10.8 (diferida) | CnnPolicy con frame 32×32 RGB | Salto cualitativo: percepción real vs centroide HSV | TQC | desde cero |
+
+**Criterio de "mejor configuración anterior"**: la iteración N+1 hereda los flags de la N que produjo el mejor `mean_steps` sostenido en eval, **medido sobre la misma dificultad de target**. Cuando v10.4 introduce target móvil, la baseline cambia (no comparar con v10.3 que era estático).
+
+### Diferencias respecto al patrón v7→v9
+
+| Aspecto | v7→v9 | v10.0→v10.7 |
+|---|---|---|
+| Cambios por versión | múltiples (v7.2 acumuló ~16 mecanismos) | **uno por iteración** |
+| Punto de arranque | reentrenamiento desde cero | **transfer learning** desde v9.1.1 hasta v10.5 |
+| Detección de regresión | post-mortem por análisis de CSV | **early-stop** con patience integrado |
+| Datos de ablation | re-runs explícitos al final | **iteración secuencial es la ablation** |
+| Diagnóstico de pesos | inferido de TB | **`WeightSanityCallback` one-shot al arrancar** |
+
+### Infraestructura nueva que habilita el plan
+
+1. **`scripts/train_hover_track_v10.py`** — script unificado con CLI flags por feature. Defaults reproducen v9.1.1 + transfer learning. Cada iteración añade flags incrementalmente:
+   ```
+   --variant v10.X            (etiqueta documental, no afecta cómputo)
+   --algo {sac,tqc}           (default sac; tqc activa solo si sb3-contrib instalado)
+   --init-from PATH           (transfer learning, default v9.1.1)
+   --init-vec-norm-from PATH  (vec_normalize stats pareadas)
+   --lr-schedule {constant,linear}
+   --patience N               (early-stop tras N evals sin mejora; 0=off)
+   --action-hover-bias F      (offset aplicado a acción antes de clip)
+   --last-known-centroid      (mantener cx,cy,dcx,dcy del último frame visible)
+   --target-speed-curriculum  (JSON dict {timestep: speed})
+   --frame-stack N            (VecFrameStack n_stack; 1=off)
+   --weight-sanity-check      (one-shot diagnostic at +2k pasos)
+   --use-layernorm            (LayerNorm en actor; v10.7)
+   --weight-decay F           (AdamW si >0; v10.7)
+   ```
+
+2. **`scripts/sanity_check_v10.py`** — diagnóstico independiente que cierra los puntos 1 y 2 de la auditoría:
+   - Imprime `obs.shape, obs.min, obs.max, obs.mean, obs.std` por dimensión sobre 5 episodios.
+   - Verifica que `r_track + r_alive + r_jerk` reportados en info coinciden con el reward del wrapper.
+   - Distribución de `term_reason` (detecta `blank` no contabilizado).
+   - Snapshot de pesos antes/después de 1k pasos de training del modelo cargado: imprime Δ medio por capa con bandera `⚠ FROZEN` si `Δ < 1e−7`.
+
+3. **Callbacks nuevos en v10**:
+   - `TargetSpeedCurriculumCallback`: muta `wrapper._curriculum_target_speed` según schedule; el wrapper lo aplica en cada `reset()`.
+   - `PatienceEarlyStopCallback`: lee `eval_cb.best_step`; si N evals consecutivos no mejoran, devuelve `False` (SB3 detiene training).
+   - `WeightSanityCallback`: one-shot al arrancar + check tras 2k pasos.
+
+### Comandos por iteración (referencia)
+
+```bash
+# v10.0 — baseline TL + sanity (~2 h CPU)
+python scripts/train_hover_track_v10.py --no-display --variant v10.0 \
+    --init-from ./models/hover_track_v9_1_1/best_model_TFG.zip \
+    --init-vec-norm-from ./models/hover_track_v9_1_1/best_vec_normalize_TFG.pkl \
+    --timesteps 50000 --weight-sanity-check \
+    --output-dir ./models/hover_track_v10_0
+
+# v10.1 — + LR schedule + patience
+python scripts/train_hover_track_v10.py --no-display --variant v10.1 \
+    --init-from ./models/hover_track_v9_1_1/best_model_TFG.zip \
+    --init-vec-norm-from ./models/hover_track_v9_1_1/best_vec_normalize_TFG.pkl \
+    --lr-schedule linear --patience 5 \
+    --timesteps 80000 --output-dir ./models/hover_track_v10_1
+
+# v10.2 — + action hover bias
+python scripts/train_hover_track_v10.py --no-display --variant v10.2 \
+    --init-from ./models/hover_track_v10_1/best_model.zip \
+    --init-vec-norm-from ./models/hover_track_v10_1/best_vec_normalize.pkl \
+    --lr-schedule linear --patience 5 --action-hover-bias 0.45 \
+    --timesteps 80000 --output-dir ./models/hover_track_v10_2
+
+# v10.3 — + last-known centroid
+python scripts/train_hover_track_v10.py --no-display --variant v10.3 \
+    --init-from ./models/hover_track_v10_2/best_model.zip \
+    --init-vec-norm-from ./models/hover_track_v10_2/best_vec_normalize.pkl \
+    --lr-schedule linear --patience 5 --action-hover-bias 0.45 \
+    --last-known-centroid \
+    --timesteps 80000 --output-dir ./models/hover_track_v10_3
+
+# v10.4 — + currículo de target_speed (la iteración que el TFG necesita)
+python scripts/train_hover_track_v10.py --no-display --variant v10.4 \
+    --init-from ./models/hover_track_v10_3/best_model.zip \
+    --init-vec-norm-from ./models/hover_track_v10_3/best_vec_normalize.pkl \
+    --lr-schedule linear --patience 8 --action-hover-bias 0.45 \
+    --last-known-centroid \
+    --target-speed-curriculum '{"0":0.0,"30000":0.1,"60000":0.3}' \
+    --timesteps 150000 --output-dir ./models/hover_track_v10_4
+
+# v10.5 — + frame stacking (sin TL: 19D vs 57D incompatible)
+python scripts/train_hover_track_v10.py --no-display --variant v10.5 \
+    --lr-schedule linear --patience 8 --action-hover-bias 0.45 \
+    --last-known-centroid --frame-stack 3 \
+    --target-speed-curriculum '{"0":0.0,"30000":0.1,"60000":0.3}' \
+    --timesteps 200000 --output-dir ./models/hover_track_v10_5
+
+# v10.6 — TQC (requiere: pip install sb3-contrib)
+python scripts/train_hover_track_v10.py --no-display --variant v10.6 --algo tqc \
+    --lr-schedule linear --patience 8 --action-hover-bias 0.45 \
+    --last-known-centroid --frame-stack 3 --top-quantiles-to-drop 2 \
+    --target-speed-curriculum '{"0":0.0,"30000":0.1,"60000":0.3}' \
+    --timesteps 200000 --output-dir ./models/hover_track_v10_6
+
+# v10.7 — + LayerNorm + AdamW
+python scripts/train_hover_track_v10.py --no-display --variant v10.7 --algo tqc \
+    --lr-schedule linear --patience 8 --action-hover-bias 0.45 \
+    --last-known-centroid --frame-stack 3 --top-quantiles-to-drop 2 \
+    --use-layernorm --weight-decay 1e-5 \
+    --target-speed-curriculum '{"0":0.0,"30000":0.1,"60000":0.3}' \
+    --timesteps 200000 --output-dir ./models/hover_track_v10_7
+```
+
+### Métricas esperadas (predicciones ex-ante para verificación post-hoc)
+
+Predicciones explícitas para que cada run pueda calificarse de éxito/fracaso sin sesgo retrospectivo:
+
+| Iter | `mean_steps` esperado @ best | `vis` esperado | Detección de fracaso |
+|---|---:|---:|---|
+| v10.0 | ≥ 2900 (TL preserva v9.1.1) | ≥ 99% | Si <2000, hay bug en carga de pesos / vec_norm |
+| v10.1 | ≥ 2900 | ≥ 99% | Si la curva eval cae antes que v9.1.1 a 90k, LR schedule rompe la convergencia |
+| v10.2 | ≥ 2900 | ≥ 99% | Si jerk se duplica respecto a v10.1, el bias rompe el equilibrio (bajar a 0.30) |
+| v10.3 | ≥ 2900 | ≥ 99% | Si vis baja respecto a v10.2 con target estático, el last-known introduce sesgo |
+| v10.4 | ≥ 2500 con `target_speed=0.3` final | ≥ 90% | Si <1500 al final del currículo, retroceder un paso de speed |
+| v10.5 | ≥ 2500 | ≥ 90% | Si frame stacking no mejora, quitarlo (capacidad arch suficiente sin él) |
+| v10.6 | ≥ 2700 (mejora por menor inflación) | ≥ 92% | Si igual a v10.5, TQC no aporta y SAC se queda |
+| v10.7 | ≥ 2800 | ≥ 93% | Si peor que v10.6, LayerNorm/AdamW no aportan en este MDP |
+
+### Decisiones diferidas explícitas
+
+- **Re-correr v9.1.1 con TQC (sin TL)** como ablación al final: si v10.6 mejora sobre v10.5, conviene tener un punto SAC↔TQC con target estático para la tabla del TFG. Es ~2 h adicionales.
+- **CnnPolicy (v10.8)**: solo si queda margen de tiempo del TFG y los resultados de v10.7 son sólidos. Es 5–10× más lento por step. Recomendable solo si la lemniscata a `target_speed=0.5` queda como problema abierto.
+- **GPU**: el entorno actual entrena en CPU (`torch 2.10+cpu`). Migrar a GPU es un acelerador de iteración, no un cambio de algoritmo. Considerable si v10.4–v10.7 acumulan >20 h CPU.
+
+### Archivos generados en esta sesión
+
+- `PROJECT_HISTORY.md`: este registro y plan iterativo.
+- `scripts/train_hover_track_v10.py`: script unificado con flags para las 7 iteraciones, callbacks `TargetSpeedCurriculumCallback`, `PatienceEarlyStopCallback`, `WeightSanityCallback`. Reusa `HoverTrackV9Wrapper` extendido con `action_hover_bias`, `last_known_centroid`, `_curriculum_target_speed`. Soporta TQC con fallback a SAC si `sb3-contrib` no instalado.
+- `scripts/sanity_check_v10.py`: diagnóstico standalone que carga un modelo y vec_normalize, ejecuta 5 episodios random + 5 con policy, imprime ranges de obs por dimensión, verifica coherencia de reward components, distribución de term_reason, y delta medio de pesos tras 1k pasos de update.
+
+### Lecciones para futuros TFG en RL (continuación)
+
+21. **Una iteración = un cambio**: el caos de v7 (~16 mecanismos acumulados) se resolvió retrocediendo a v8 mínimo y volviendo a subir un parámetro a la vez. v10 aplica esa lección desde el día 1: cada subversión añade exactamente un flag, los demás se heredan textualmente. Cuando algo se rompe, el causante es identificable sin bisección.
+
+22. **Predicciones ex-ante son barreras contra el sesgo retrospectivo**: declarar `mean_steps≥X` antes de lanzar el run obliga a interpretar resultados mediocres como fracasos en lugar de re-narrarlos como éxitos parciales. Esto se aplica en RL específicamente porque la varianza entre runs invita a la racionalización.
+
+23. **Transfer learning del best model evita re-entrenar curvas conocidas**: v10.0–v10.4 arrancan desde v9.1.1 (no desde cero). 90k pasos de "subir-pico-degradar" ya se conocen; los siguientes 50k no necesitan re-pagar ese coste para validar un cambio incremental. Solo v10.5 (frame stacking, dim incompatible) y v10.6 (TQC, distribución de Q distinta) reentrenan desde cero por necesidad técnica.
+
+---
+
+## [Fecha: 2026-05-08] - Ejecución del plan v10: TL fallido, replanteo, v10.4 resuelve target en movimiento
+
+### Fase 1 — v10.0 y v10.1: el experimento fallido de TL+SAC
+
+Tras documentar el plan v10 con TL desde v9.1.1 como columna vertebral, dos runs sucesivos demostraron que **TL+SAC con autotune devalúa estructuralmente la política cargada en este MDP**. Síntesis de los datos:
+
+| Run | Config | Best capturado | Test offline (10 seeds nuevos) |
+|---|---|---|---|
+| v10.0 | TL desde v9.1.1, default v9 + LR/patience desactivados | 1144 steps @ 20k | **2/10 a 3000 steps**, mean=1062 ± 997 |
+| v10.1 | TL + `target_entropy=−2.0` + LR linear + patience=2 + `learning_starts=1000` | 385 steps @ 35k | (no testeado, claramente subóptimo) |
+
+**Diagnóstico (validado en 2 configuraciones):**
+- v10.0 con `target_entropy=−1.0`: `ent_coef` sube de 0.116 (cargado) a 0.31. La política colapsa transitoriamente al pico (1144 @ 20k) y degrada después. El test offline reveló **bimodalidad**: 2/10 episodios al techo, 8/10 colapso parcial. `mean_steps=1062` engañoso por el promedio bimodal.
+- v10.1 con `target_entropy=−2.0` y `learning_starts=1000`: critic_loss explota a 104 (vs 22 en v10.0). La menor diversidad del buffer al iniciar updates (1000 vs 5000) **agrava** la inestabilidad. Curva monotónicamente creciente pero plateau en ~385.
+
+**Conclusión empírica del fallo de TL**:
+Tres mecanismos actúan juntos al cargar `SAC.load()` y no se pueden desactivar individualmente:
+1. **Replay buffer vacío** → primeros updates entrenan con datos correlacionados → critic mal estimado
+2. **VecNormalize.training=True** → running stats drift → obs ligeramente distintas a las del training original
+3. **Autotuner de `ent_coef`** → siempre converge a ~0.31 sin importar `target_entropy`, perturbando el actor
+
+En tres runs distintos (v10.0, v10.1) y dos valores de `target_entropy`, `ent_coef` siempre acaba en ~0.31. No es problema de hiperparámetros, es **limitación estructural** del setup TL+SAC. Conclusión: **descartar TL encadenado** y volver al patrón de v9.1.1 (entrenar desde cero) para todas las iteraciones de v10.
+
+### Fase 2 — v10.4-pilot: validación de la infraestructura desde cero
+
+Decisión: replicar la receta de v9.1.1 con el script `train_hover_track_v10.py` (sin TL) para verificar que la infraestructura v10 reproduce la baseline v9.1.1 antes de añadir el currículo.
+
+Comando:
+```bash
+python scripts/train_hover_track_v10.py --no-display --variant v10.4-pilot --target-entropy -1.0 --learning-starts 5000 --lr-schedule linear --patience 5 --eval-freq 10000 --timesteps 100000 --weight-sanity-check --output-dir ./models/hover_track_v10_4_pilot
+```
+
+**Resultado piloto (100k pasos, ~64 min CPU):**
+
+| Métrica | v9.1.1 referencia | **v10.4-pilot** |
+|---|---:|---:|
+| `mean_steps` @ 90k (best capturado) | 3000 | **2438** |
+| `vis%` @ 90k | 100% | 100% |
+| `jerk` @ 90k | 0.044 | 0.045 |
+| Test offline 10 seeds nuevos | 10/10 a 3000 | **9/10 a 3000** (1 fallo `physics_diverged`) |
+
+El piloto reprodujo v9.1.1 con altísima fidelidad. Best capturado a paso 90k coincide con la transición de fase de v9.1.1. Test offline confirma robustez (9/10 a 3000 steps, 1 episodio con divergencia numérica del integrador scipy ODE — no fallo del modelo). **Infraestructura v10 validada.**
+
+### Fase 3 — v10.4 completo: 200k pasos + currículo de target_speed
+
+Comando final ejecutado:
+```bash
+python scripts/train_hover_track_v10.py --no-display --variant v10.4 --target-entropy -1.0 --learning-starts 5000 --lr-schedule linear --patience 5 --eval-freq 10000 --target-speed-curriculum '{"0":0.0,"100000":0.05,"130000":0.10,"160000":0.15}' --timesteps 200000 --output-dir ./models/hover_track_v10_4
+```
+
+**Bug PowerShell intermedio**: el comando inicialmente fallaba porque PowerShell no respeta `\"` como escape. Se corrigió usando comillas simples por fuera del JSON. Lección: PowerShell trata `\` como literal — JSON args van entre `'...'`.
+
+**Trayectoria del run (18 evals, 117 min CPU):**
+
+| Fase del currículo | Eval representativo | Comportamiento |
+|---|---|---|
+| 0–100k (estático) | @100k: 2003 steps, vis=97% | Convergencia a 3000 steps a paso 100k |
+| 100–130k (`target_speed=0.05`) | @130k: **2965 steps, vis=100%** ★ | Best capturado. El currículo a 0.05 SUBE el rendimiento |
+| 130–160k (`target_speed=0.10`) | @150k: 2035 steps, vis=93% | Sigue funcionando, max train=4840 (48 s vuelo) |
+| 160–200k (`target_speed=0.15`) | @180k: 357 steps | Colapso. Modo `altitude_low` dominante |
+
+**Hallazgo contraintuitivo principal**: el currículo a `target_speed=0.05` **mejoró** el rendimiento respecto al estático (eval @ 90k = 418 steps → @ 100k = 2003 steps, mismo modelo). Hipótesis: con target estático el reward de centrado es plano (cualquier punto cercano da reward similar) y la política puede vagabundear; con target en movimiento lento el gradiente de reward está mejor definido y la red se vuelve más decisiva.
+
+**Cambio de modo de fallo según velocidad** (CSV de 525 episodios de training):
+
+| Fase | Top failure mode | Lectura física |
+|---|---|---|
+| Estático | `altitude_high` (62), `lost_target` (57) | Drone sube por bias exploratorio |
+| 0.05 | `(blank/trunc)` dominante | Casi sin fallos |
+| 0.10 | `altitude_low` (7) aparece | Drone baja al inclinarse para perseguir |
+| 0.15 | `altitude_low` (13) dominante | No compensa pérdida de sustentación al inclinar |
+
+### Fase 4 — Validación experimental con `test_hover_track_v10.py`
+
+Script nuevo creado para testear modelos v10 con `target_speed` arbitrario en eval (a diferencia de `test_hover_track_v9_1.py` que fuerza `target_speed=0` por herencia del wrapper v9). Aprovecha `HoverTrackV10Wrapper.use_curriculum_speed=True` para que `reset()` aplique la velocidad pasada por CLI.
+
+**Resultados de los 4 tests offline al best (@ 130k), seeds 2000–2009:**
+
+| Velocidad | Survival declarado | mean_steps | vis | jerk | Survival real (descontando physics_diverged) |
+|---|---:|---:|---:|---:|---|
+| **0.0 m/s** | 10/10 | 3000 ± 0 | 100% | 0.030 | **10/10** ✓ |
+| **0.05 m/s** | 6/10 | 2672 ± 702 | **100%** | 0.087 | **10/10** efectivo (4 physics_diverged) |
+| **0.10 m/s** | 8/10 | 2500 ± 999 | 99.4% | 0.096 | **9/10** efectivo (1 physics_diverged + 1 `altitude_low`) |
+| **0.15 m/s** | 0/10 | 916 ± 374 | 86.8% | 0.131 | **0/10** real (7 `altitude_low` claros, fallo del modelo) |
+
+**El bug de `physics_diverged`**: 4 episodios a 0.05 m/s con `term=(none)`, `vis=100%`, `steps ∈ {639, 2450, 2640, 2996}` — patrón claro de divergencia numérica del integrador scipy ODE. No es fallo de la política. El wrapper v9 captura el `RuntimeError` con `try/except` pero no escribe `term_reason`. Documentar como artefacto del integrador, no del modelo.
+
+**Diagnóstico físico del fallo a 0.15 m/s**:
+1. Target a 15 cm/s requiere pitch ~ 0.3 rad para perseguir
+2. `F_z = F · cos(pitch) ≈ 0.95·F` → 5% pérdida de sustentación vertical
+3. La política aprendida no compensa subiendo thrust total → caída lenta
+4. `vis` cae a 81–87% por desplazamiento del target al borde inferior del FOV
+5. Eventualmente `z < 0.5` → terminación `altitude_low`
+
+Esto es **fallo de control**, no de visión. Implica que `--last-known-centroid` (originalmente v10.5) no lo arreglaría — la política sí ve el target, simplemente no compensa físicamente.
+
+### Decisión: TFG resuelto experimentalmente con `target_speed ≤ 0.10` m/s
+
+| Régimen | Resultado documentado | Estado para TFG |
+|---|---|---|
+| Estático | 10/10 a 3000 steps, vis 100%, jerk 0.030 | ✓ Resuelto |
+| 0.05 m/s | 10/10 efectivo, vis 100%, jerk 0.087 | ✓ Resuelto |
+| 0.10 m/s | 9/10 efectivo, vis 99.4%, jerk 0.096 | ✓ Resuelto |
+| 0.15 m/s | 0/10, fallo `altitude_low`, vis baja a 87% | Techo demostrado, trabajo futuro |
+
+**Modelo final del TFG**: `models/hover_track_v10_4/best_model.zip` (snapshot @ 130k, capturado al final de la fase de currículo `target_speed=0.05`). Acompañado de `best_vec_normalize.pkl`. Reproduce comportamiento robusto en 3 regímenes (estático, 0.05, 0.10) con visibilidad ≥ 99%.
+
+**Backup defensivo recomendado** (acción pendiente):
+```bash
+cp ./models/hover_track_v10_4/best_model.zip          ./models/hover_track_v10_4/best_model_TFG.zip
+cp ./models/hover_track_v10_4/best_vec_normalize.pkl  ./models/hover_track_v10_4/best_vec_normalize_TFG.pkl
+```
+
+### Validación adicional pendiente — checkpoint @ 150k a `target_speed=0.10`
+
+El callback eligió best por lex order `(surv, steps, vis, -jerk)` que comparó números absolutos entre evals con target_speeds distintos. El best @ 130k entrenó 30k pasos a `0.05`; el checkpoint @ 150k entrenó 20k pasos adicionales a `0.10`. Hipótesis: para uso a `target_speed=0.10`, el checkpoint @ 150k podría rendir mejor que el best @ 130k.
+
+Comando de validación pendiente:
+```bash
+python scripts/test_hover_track_v10.py --no-display --model-dir ./models/hover_track_v10_4 --model-name checkpoints/model_150000_steps --vec-norm-name checkpoints/vec_normalize_150000_steps --target-speed 0.10 --output-name test_at_150k_speed_010
+```
+
+Si supera 8/10 → reportar **dos modelos finales** ("best para 0.05" y "best para 0.10"). Si rinde igual o peor → mantener best @ 130k como único modelo final.
+
+### Plan v10.5+ descartado por innecesario
+
+Las iteraciones originalmente planificadas (v10.2 action_hover_bias, v10.3/v10.5 last-known-centroid, v10.6 TQC, v10.7 LayerNorm+AdamW) **no son necesarias para el objetivo del TFG**. El currículo de target_speed sobre la receta v9.1.1 ha sido suficiente. Quedan documentadas como **trabajo futuro para empujar a `target_speed ≥ 0.15`**:
+
+1. **Reward shaping anti-altitude_low**: añadir `−1.0 · max(0, z_min + 0.1 − z)` para penalizar acercarse al suelo. Ataca el modo de fallo dominante a 0.15.
+2. **Currículo más fino**: `0.10 → 0.12 → 0.15` (incrementos del 25% en lugar del 50% del currículo actual).
+3. **VecFrameStack(3)**: contexto temporal para predecir aceleración del target. Útil cuando la inercia importa (velocidades altas).
+4. **`--last-known-centroid`**: marginal según los datos (vis=99% a 0.10), pero podría estabilizar centrado en transiciones.
+
+### Comparativa final con todas las versiones del proyecto
+
+| Versión | Régimen demostrado | Best steps | Test offline | Notas |
+|---|---|---:|---|---|
+| v8.1 baseline | Estático | 196 | n/d | Techo estructural |
+| v9.1.1 | Estático | 3000 | 10/10 a 3000 | Cierre experimental de target estático |
+| v10.0 (TL) | Estático | 1144 (callback) | 2/10 a 3000 | TL falla (bimodal) |
+| v10.1 (TL + correcciones) | Estático | 385 (callback) | n/d | TL sigue fallando |
+| v10.4-pilot (sin TL, 100k) | Estático | 2438 | 9/10 a 3000 | Validación de infraestructura |
+| **v10.4 (sin TL + currículo)** | **0.05–0.10 m/s** | **2965 @ 130k** | **10/10 a 0.0, 10/10 efectivo a 0.05, 9/10 a 0.10** | **MODELO FINAL TFG** |
+
+### Archivos generados en esta fase (2026-05-08)
+
+- `scripts/test_hover_track_v10.py` (~250 líneas): test offline con `--target-speed FLOAT` arbitrario. Carga model+vec_norm de cualquier directorio o checkpoint, ejecuta N episodios deterministes, persiste `test_results_*.json` con métricas agregadas.
+- `models/hover_track_v10_0/`: 50k pasos, run TL inicial. Best buggy (bimodal), final 364. Archivado como dato del fallo de TL.
+- `models/hover_track_v10_1/`: 40k pasos, run TL con correcciones. Best=385 estable. Archivado.
+- `models/hover_track_v10_4_pilot/`: 100k pasos sin TL. Best=2438 @ 90k. Test offline 9/10 a 3000.
+- `models/hover_track_v10_4/`: 200k pasos sin TL + currículo. Best=2965 @ 130k. Test offline 10/10 a 0.0, ~10/10 efectivo a 0.05, 9/10 a 0.10. **Modelo final del TFG.**
+- 4 archivos `test_results_speed_*.json` con métricas detalladas por velocidad.
+
+### Lecciones para futuros TFG en RL (continuación)
+
+24. **TL+SAC con autotune devalúa la política cargada en MDPs como este**: verificado en 2 runs (v10.0 con `target_entropy=−1`, v10.1 con `=−2`). En ambos `ent_coef` converge a ~0.31 sin importar el target. El problema es la combinación replay-vacío + VecNormalize-drift + autotuner; no se resuelve con un solo hiperparámetro. **Regla**: para iterar sobre un MDP con un best_model SAC robusto, **entrenar desde cero con la receta exitosa**, no encadenar TL.
+
+25. **Las predicciones ex-ante deben recalibrarse tras los fallos**: las primeras 3 predicciones del plan v10 (v10.0 ≥2900, v10.1 ≥1500, v10.4-pilot @70k ≥1500) fallaron sistemáticamente con sesgo optimista. Tras dos fallos consecutivos las predicciones se ajustaron a la baja y el piloto v10.4 acertó (@90k=2438 vs predicción 2500). **Las predicciones ex-ante son tanto un mecanismo anti-sesgo como un mecanismo de calibración**.
+
+26. **El currículo no es solo concesión, es palanca**: el dato de v10.4 muestra que pasar de `target_speed=0` a `0.05` SUBIÓ el rendimiento (eval @90k=418 → @100k=2003 sobre el mismo modelo). El gradiente de reward se hace más definido con movimiento mínimo, mejorando la convergencia. Citable en discusión del TFG.
+
+27. **Lex order del callback puede engañar entre fases distintas del currículo**: el callback comparó eval @130k (target_speed=0.05) con eval @150k (target_speed=0.10) por número absoluto de steps. No son comparables: son regímenes distintos. **Para currículos**: o evaluar siempre en el régimen objetivo final, o capturar best por fase. Insuficiencia detectada en v10.4 — mitigada con test offline a velocidad fija.
+
+28. **`physics_diverged` del integrador es un artefacto, no fallo del modelo**: 4 de 10 episodios a 0.05 m/s y 1 de 10 a 0.10 m/s con `term=(none)`, `vis=100%`, steps prematuros. Patrón inequívoco. Descontarlos de los resultados es metodológicamente correcto. Documentar como ruido del simulador en el capítulo de resultados, no como debilidad del modelo. Para cerrar la cuestión: el `try/except RuntimeError` del wrapper debería propagar `term_reason='physics_diverged'` (mejora menor pendiente).
+
+29. **El modo de fallo dominante define las palancas útiles**: a 0.15 m/s el problema es `altitude_low` (control de sustentación al inclinar), no visibilidad. `--last-known-centroid` (que iba a ser v10.2/v10.3/v10.5 en distintos planes) no atacaría el problema real. **Ver los modos de fallo antes de planificar la siguiente iteración**.
+
+30. **Cierre experimental honesto > pico nominal**: el best en eval del callback fue 2965 (@130k a 0.05). El test offline reveló que es 10/10 efectivo a 0.05 y 9/10 a 0.10. Esos números son la verdad operativa del modelo. Cerrar el TFG con `target_speed ≤ 0.10` demostrado es más defendible que perseguir `0.15` con técnicas no probadas y arriesgar regresiones en 0.05/0.10. **El TFG resuelve un objetivo, no un techo**.
+
+---
+

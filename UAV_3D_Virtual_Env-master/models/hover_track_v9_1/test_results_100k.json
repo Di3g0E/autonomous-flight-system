@@ -1,0 +1,114 @@
+{
+  "n_episodes": 10,
+  "survival_rate": 0.0,
+  "mean_steps": 388.0,
+  "std_steps": 113.8911761287941,
+  "min_steps": 226,
+  "max_steps": 587,
+  "mean_visibility": 0.6839324084138289,
+  "mean_jerk": 0.08120806038265002,
+  "mean_reward": 17.728662989506297,
+  "std_reward": 64.800413987732,
+  "episodes": [
+    {
+      "episode": 1,
+      "seed": 2000,
+      "steps": 226,
+      "survived": 0,
+      "visibility": 0.504424778761062,
+      "mean_jerk": 0.08714080287350548,
+      "reward": -66.97168511217403,
+      "term_reason": "lost_target"
+    },
+    {
+      "episode": 2,
+      "seed": 2001,
+      "steps": 289,
+      "survived": 0,
+      "visibility": 0.6539792387543253,
+      "mean_jerk": 0.055878720763656825,
+      "reward": -3.184622987383506,
+      "term_reason": "lost_target"
+    },
+    {
+      "episode": 3,
+      "seed": 2002,
+      "steps": 438,
+      "survived": 0,
+      "visibility": 0.6963470319634704,
+      "mean_jerk": 0.06280838675984529,
+      "reward": 47.37859048185674,
+      "term_reason": "lost_target"
+    },
+    {
+      "episode": 4,
+      "seed": 2003,
+      "steps": 587,
+      "survived": 0,
+      "visibility": 0.8296422487223168,
+      "mean_jerk": 0.10528432875363086,
+      "reward": 138.01660713853892,
+      "term_reason": "lost_target"
+    },
+    {
+      "episode": 5,
+      "seed": 2004,
+      "steps": 422,
+      "survived": 0,
+      "visibility": 0.6658767772511849,
+      "mean_jerk": 0.14004296906770267,
+      "reward": -2.831707257960416,
+      "term_reason": "lost_target"
+    },
+    {
+      "episode": 6,
+      "seed": 2005,
+      "steps": 324,
+      "survived": 0,
+      "visibility": 0.691358024691358,
+      "mean_jerk": 0.06377508124515369,
+      "reward": 5.591096201817479,
+      "term_reason": "lost_target"
+    },
+    {
+      "episode": 7,
+      "seed": 2006,
+      "steps": 346,
+      "survived": 0,
+      "visibility": 0.7109826589595376,
+      "mean_jerk": 0.049006505634473715,
+      "reward": 7.37464624854373,
+      "term_reason": "lost_target"
+    },
+    {
+      "episode": 8,
+      "seed": 2007,
+      "steps": 513,
+      "survived": 0,
+      "visibility": 0.8050682261208577,
+      "mean_jerk": 0.056364744872553274,
+      "reward": 104.3137755334636,
+      "term_reason": "lost_target"
+    },
+    {
+      "episode": 9,
+      "seed": 2008,
+      "steps": 486,
+      "survived": 0,
+      "visibility": 0.7716049382716049,
+      "mean_jerk": 0.08047707747552812,
+      "reward": 32.949844574075094,
+      "term_reason": "lost_target"
+    },
+    {
+      "episode": 10,
+      "seed": 2009,
+      "steps": 249,
+      "survived": 0,
+      "visibility": 0.5100401606425703,
+      "mean_jerk": 0.11130198638045019,
+      "reward": -85.34991492571464,
+      "term_reason": "lost_target"
+    }
+  ]
+}

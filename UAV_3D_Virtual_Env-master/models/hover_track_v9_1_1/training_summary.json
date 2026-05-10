@@ -1,0 +1,42 @@
+{
+  "total_episodes": 425,
+  "final_mean_reward": 515.784123698771,
+  "csv_path": "models\\hover_track_v9_1_1\\training_log.csv",
+  "total_timesteps": 200000,
+  "training_time_seconds": 8787.236660718918,
+  "algorithm": "SAC",
+  "version": "v9",
+  "reward_version": "v9 (same as v8: track + alive + jerk)",
+  "sac_hyperparams": {
+    "learning_rate": 0.0003,
+    "batch_size": 256,
+    "buffer_size": 200000,
+    "gamma": 0.995,
+    "tau": 0.01,
+    "target_entropy": -1.0,
+    "learning_starts": 5000
+  },
+  "vec_normalize": true,
+  "reward_weights": {
+    "alive": 0.1,
+    "jerk": 0.2,
+    "invisible": 1.0
+  },
+  "spawn": {
+    "height_m": 1.5,
+    "jitter_xy": 0.2
+  },
+  "termination": {
+    "z_min": 0.5,
+    "z_max": 3.0,
+    "invisible_steps": 100,
+    "crash_penalty": 2.0
+  },
+  "eval": {
+    "best_survival": 0.0,
+    "best_visibility": 1.0,
+    "best_jerk": 0.043477253098613465,
+    "best_step": 90000
+  },
+  "policy_params": 195724
+}

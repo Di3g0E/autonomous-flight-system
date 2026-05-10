@@ -60,7 +60,7 @@ def world_setup(env, render, mydir):
     dlight.setColor(panda3d.core.Vec4(1, 1, 1, 1)) # directional light is dim green
     dlight.getLens().setFilmSize(panda3d.core.Vec2(50, 50))
     dlight.getLens().setNearFar(-100, 100)
-    dlight.setShadowCaster(True, 4096*2, 4096*2)
+    dlight.setShadowCaster(True, 1024, 1024) # dlight.setShadowCaster(True, 4096*2, 4096*2)
     # dlight.show_frustum()
     dlightNP = render.attachNewNode(dlight)
     dlightNP.setHpr(0,-65,0)
