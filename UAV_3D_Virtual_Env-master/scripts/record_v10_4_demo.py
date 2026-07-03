@@ -29,6 +29,7 @@ Usage:
 """
 
 import argparse
+import math
 import os
 import sys
 from pathlib import Path
@@ -61,6 +62,7 @@ from src.simulation.world_setup import world_setup, quad_setup
 from src.simulation.camera_control import camera_control
 from src.vision.img_2_cv import opencv_camera
 from src.agents.spiral_search_controller import SpiralSearchController
+from src.agents.spiral_search_controller_v2 import SpiralSearchControllerV2
 from scripts.train_hover_track_v10 import HoverTrackV10Wrapper
 
 
@@ -76,6 +78,16 @@ def parse_args():
                    default='./models/hover_track_v10_4/best_vec_normalize_TFG.pkl')
     p.add_argument('--spiral-model',
                    default='./models/spiral_follow/best_model.zip')
+    p.add_argument('--use-v2', action='store_true',
+                   help="Use SpiralSearchControllerV2 (relative-frame, "
+                        "climb-then-spiral). Default --spiral-model is v1; "
+                        "with --use-v2 you usually want "
+                        "--spiral-model ./models/spiral_follow_v2/best_model.zip")
+    p.add_argument('--climb-offset', type=float, default=0.8,
+                   help="v2 only: metres to climb before spiral starts.")
+    p.add_argument('--climb-duration-steps', type=int, default=100,
+                   help="v2 only: sim steps reserved for the climb phase "
+                        "(100 = 1.0 s).")
     p.add_argument('--target-speed', type=float, default=0.10,
                    help="Lemniscate speed in m/s. 0.10 demonstrates the "
                         "best model's operational regime.")
@@ -86,6 +98,42 @@ def parse_args():
     p.add_argument('--spawn-offset', type=float, default=1.0,
                    help="full-flight only: XY distance from target at spawn (m). "
                         "1.0 = target found in ~2 s; >1.5 risks BB violation.")
+    p.add_argument('--scenario', choices=['target-below', 'target-outside'],
+                   default=None,
+                   help="full-flight only. Overrides spawn positions:\n"
+                        "  target-below   : target directly under the drone "
+                        "(same vertical axis) → tracking activates immediately.\n"
+                        "  target-outside : target far lateral from the drone, "
+                        "outside the downward camera's FOV → search/spiral "
+                        "activates, then HANDOFF when found.")
+    p.add_argument('--hover-z', type=float, default=1.5,
+                   help="Drone spawn altitude for --scenario (m). v2 spiral "
+                        "handles any altitude; 1.5 keeps the camera coverage "
+                        "reasonable.")
+    p.add_argument('--scenario-offset', type=float, default=2.5,
+                   help="--scenario target-outside: lateral XY distance from "
+                        "target where the drone spawns (m). 2.5 m is well "
+                        "outside the downward camera FOV at hover_z=1.5.")
+    p.add_argument('--central-fov-radius', type=float, default=0.0,
+                   help="Stricter visibility for SEARCH→TRACK transition: "
+                        "only treat target as visible if its centroid is "
+                        "within a circle of this normalised radius (image "
+                        "coords in [-1, 1]). 0.0 disables the filter "
+                        "(default = raw visibility). Try 0.30–0.50.")
+    p.add_argument('--central-fov-frames', type=int, default=3,
+                   help="Consecutive frames the centroid must be inside the "
+                        "central radius before TRACK activates. Avoids flicker.")
+    p.add_argument('--central-fov-timeout', type=int, default=0,
+                   help="Fallback: if the target is visible but never centred "
+                        "for this many consecutive steps, force the transition "
+                        "anyway. 0 disables the fallback (default).")
+    p.add_argument('--spiral-restart-cooldown', type=int, default=200,
+                   help="Min steps between spiral restarts. The spiral "
+                        "restarts at the drone's current XYZ when the target "
+                        "becomes raw-visible during SEARCH but the central "
+                        "filter blocks TRACK — so the drone re-spirals around "
+                        "its current position instead of drifting further on "
+                        "the previous arc. 0 disables restarts.")
     p.add_argument('--invisible-threshold', type=int, default=5,
                    help="full-flight: steps without target before SEARCH activates")
     p.add_argument('--handoff-steps', type=int, default=50,
@@ -119,7 +167,8 @@ STATE_COLORS = {
 }
 
 
-def draw_fpv(panel, info, panel_w, panel_h):
+def draw_fpv(panel, info, panel_w, panel_h, central_fov_radius=0.0,
+             centred_now=False):
     """Add labels, crosshair and target marker on top of FPV image."""
     cv2.putText(panel, "FPV (drone view)", (10, 24),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
@@ -127,6 +176,15 @@ def draw_fpv(panel, info, panel_w, panel_h):
     cx, cy = panel_w // 2, panel_h // 2
     cv2.line(panel, (cx - 12, cy), (cx + 12, cy), (0, 255, 0), 1)
     cv2.line(panel, (cx, cy - 12), (cx, cy + 12), (0, 255, 0), 1)
+    # Central-FOV gating circle (ellipse to honour the wide panel).
+    if central_fov_radius > 0.0:
+        ax = int(central_fov_radius * panel_w / 2)
+        ay = int(central_fov_radius * panel_h / 2)
+        color = (60, 255, 60) if centred_now else (255, 200, 0)
+        cv2.ellipse(panel, (cx, cy), (ax, ay), 0, 0, 360, color, 2)
+        cv2.putText(panel, f"central r={central_fov_radius:.2f}",
+                    (cx - ax, cy - ay - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
     # Target dot
     vt = info.get('visual_tracking', {})
     if vt.get('target_visible', False):
@@ -295,16 +353,32 @@ class DemoApp(ShowBase):
         # Spiral controller (only full-flight)
         self.controller = None
         if args.mode == 'full-flight':
-            self.controller = SpiralSearchController(
-                spiral_model_path=args.spiral_model,
-                omega=1.8, r_growth=0.12,
-                hover_height=1.394, vision_radius=0.5,
-                invisible_threshold=args.invisible_threshold,
-                handoff_steps=args.handoff_steps,
-            )
-            print(f"Loaded spiral search model: {args.spiral_model}  "
-                  f"(handoff_steps={args.handoff_steps}, "
-                  f"velocity_damp={'OFF' if args.no_velocity_damp else 'ON'})")
+            if args.use_v2:
+                self.controller = SpiralSearchControllerV2(
+                    spiral_model_path=args.spiral_model,
+                    omega=1.8, r_growth=0.12,
+                    climb_offset=args.climb_offset,
+                    climb_duration_steps=args.climb_duration_steps,
+                    vision_radius=0.5,
+                    invisible_threshold=args.invisible_threshold,
+                    handoff_steps=args.handoff_steps,
+                )
+                print(f"Loaded spiral search model V2: {args.spiral_model}  "
+                      f"(climb_offset={args.climb_offset} m, "
+                      f"climb_steps={args.climb_duration_steps}, "
+                      f"handoff_steps={args.handoff_steps}, "
+                      f"velocity_damp={'OFF' if args.no_velocity_damp else 'ON'})")
+            else:
+                self.controller = SpiralSearchController(
+                    spiral_model_path=args.spiral_model,
+                    omega=1.8, r_growth=0.12,
+                    hover_height=1.394, vision_radius=0.5,
+                    invisible_threshold=args.invisible_threshold,
+                    handoff_steps=args.handoff_steps,
+                )
+                print(f"Loaded spiral search model: {args.spiral_model}  "
+                      f"(handoff_steps={args.handoff_steps}, "
+                      f"velocity_damp={'OFF' if args.no_velocity_damp else 'ON'})")
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -373,18 +447,52 @@ def run_full_flight_demo(app, args, output_path, panel_w, panel_h):
     obs, info = app.raw_env.reset(seed=args.seed)
     app.taskMgr.step()
 
-    # Move drone away from target after wrapper.reset() (which spawned near).
-    # We mutate base_env.state directly and re-run the visualisation /
-    # camera capture pipeline so obs reflects the new position.
-    target_pos = app.raw_env.target_pos
+    # Decide drone and target positions.
+    # Two scenarios are supported via --scenario; otherwise we fall back
+    # to the legacy "offset from random target" placement.
+    if args.scenario in ('target-below', 'target-outside'):
+        # Start the lemniscate at phase=π/2 (lemniscate_point returns the
+        # origin there) so the target begins at (0,0,0). The lemniscate
+        # then advances at args.target_speed — pass 0.0 for a static
+        # target, or e.g. 0.10 for a moving target along the ∞ curve.
+        app.raw_env._lemniscate_phase = float(np.pi / 2)
+        app.raw_env._target_time = 0.0
+        app.raw_env.target_speed = float(args.target_speed)
+        app.raw_env.target_pos = np.array([0.0, 0.0, 0.0])
+        app.raw_env._update_target_marker_pos()
+
+    if args.scenario == 'target-below':
+        # Drone directly above the target; downward camera sees it on
+        # frame 1 → controller stays in TRACK; no spiral.
+        drone_x, drone_y = 0.0, 0.0
+        drone_z = float(args.hover_z)
+        print(f"Scenario: target-below  target=(0.00,0.00,0.00)  "
+              f"drone=({drone_x:.2f},{drone_y:.2f},{drone_z:.2f})")
+    elif args.scenario == 'target-outside':
+        # Drone spawned laterally far so the downward camera does NOT
+        # see the target at (0,0,0) → SEARCH activates after
+        # --invisible-threshold and the v2 spiral runs.
+        off = float(args.scenario_offset)
+        drone_x = float(off)
+        drone_y = float(off * 0.6)
+        drone_z = float(args.hover_z)
+        print(f"Scenario: target-outside  target=(0.00,0.00,0.00)  "
+              f"drone=({drone_x:.2f},{drone_y:.2f},{drone_z:.2f})  "
+              f"lateral={off:.2f} m")
+    else:
+        # Legacy v1 placement (offset from whatever target the wrapper
+        # randomised). Used by full-flight runs that don't pass --scenario.
+        target_pos = app.raw_env.target_pos
+        drone_x = float(target_pos[0] + args.spawn_offset)
+        drone_y = float(target_pos[1] + args.spawn_offset * 0.6)
+        # v1 required absolute z=1.394; v2 doesn't, but we keep it as the
+        # legacy default to preserve old behaviour when --use-v2 is off.
+        drone_z = float(args.hover_z) if args.use_v2 else 1.394
+
     state = app.raw_env.base_env.state.copy()
-    state[0] = target_pos[0] + args.spawn_offset           # x
-    state[2] = target_pos[1] + args.spawn_offset * 0.6     # y
-    # IMPORTANT: spawn at ABSOLUTE hover_height (1.394 m), NOT target_z+1.5.
-    # The SpiralSearchController has hover_height=1.394 hardcoded and computes
-    # dz=(1.394 - drone_z)/1.394. Spawning higher gives dz<<0 (out of training
-    # distribution) → spiral model produces erratic actions → drone falls.
-    state[4] = 1.394
+    state[0] = drone_x
+    state[2] = drone_y
+    state[4] = drone_z
     state[1] = state[3] = state[5] = 0.0
     state[6] = 1.0
     state[7:10] = 0.0
@@ -408,52 +516,128 @@ def run_full_flight_demo(app, args, output_path, panel_w, panel_h):
     last_visible = False
     prev_state = 'track'  # controller initial state
 
+    # Strict-visibility filter for SEARCH→TRACK transition.
+    # We only consider the target "visible enough to take over" if its
+    # centroid lives inside a central circle in the image for several
+    # consecutive frames. While in TRACK, raw visibility is used so the
+    # controller can still detect target loss and fall back to SEARCH.
+    central_streak = 0
+    uncentred_visible_streak = 0
+    central_filter_on = float(args.central_fov_radius) > 0.0
+
+    # Spiral restart on sight: when the target becomes raw-visible during
+    # SEARCH but the central filter still blocks TRACK, re-anchor the
+    # spiral at the drone's current XYZ so the next arc spirals around
+    # the new position instead of drifting further on the previous one.
+    raw_visible_prev = False
+    spiral_restart_step = -10_000  # far in the past
+    spiral_restart_count = 0
+
     while step < max_steps:
-        # Normalise obs once for the tracking branch inside the controller.
-        obs_in = app.vec_env.normalize_obs(np.asarray(obs, dtype=np.float32))
-
-        # Save controller state BEFORE get_action so we can detect transitions
-        # (get_action mutates self._state internally).
+        # ── Strict visibility for SEARCH→TRACK ────────────────────────
+        # Use the centroid from the current obs (set by the previous
+        # env.step) to decide if the target is centred enough. Only
+        # apply the filter while the controller is in SEARCH/HANDOFF;
+        # when in TRACK, raw visibility is used so the controller can
+        # still detect target loss.
         state_before = app.controller.current_state
-        act = app.controller.get_action(
-            obs_in, last_visible, app.tracking_model, app.raw_env)
-        state_after = app.controller.current_state
+        ctrl = app.controller
 
-        # Velocity damping at state transitions. v10.4 is trained with very
-        # tight init (init_vel_range=0.10), but the spiral's lateral velocity
-        # at r=0.3m, omega=1.8 → ~0.5 m/s, 5× the training distribution.
-        # We damp at TWO transitions:
-        #   SEARCH → HANDOFF: clean entry into the blending phase
-        #   HANDOFF → TRACK : clean handoff to v10.4 (the critical one)
-        # The second is what actually fixed the integrated demo: the 50-step
-        # handoff blends spiral_action into rl_action, but during those steps
-        # spiral influence keeps producing lateral motion. Damping again at
-        # the moment v10.4 takes full control gives it a state in distribution.
+        is_central_now = False
+        if central_filter_on and last_visible:
+            cx_norm = float(obs[13])
+            cy_norm = float(obs[14])
+            centroid_dist = math.sqrt(cx_norm * cx_norm + cy_norm * cy_norm)
+            is_central_now = centroid_dist < float(args.central_fov_radius)
+
+        if is_central_now:
+            central_streak += 1
+            uncentred_visible_streak = 0
+        else:
+            central_streak = 0
+            uncentred_visible_streak = (
+                uncentred_visible_streak + 1 if last_visible else 0)
+
+        if central_filter_on and state_before in ('search', 'handoff'):
+            strict_ok = central_streak >= int(args.central_fov_frames)
+            timeout_ok = (int(args.central_fov_timeout) > 0
+                          and uncentred_visible_streak
+                          >= int(args.central_fov_timeout))
+            visible_for_ctrl = bool(strict_ok or timeout_ok)
+        else:
+            visible_for_ctrl = bool(last_visible)
+
+        # ── Spiral restart on sight ───────────────────────────────────
+        # If the target just appeared in raw FOV during SEARCH but the
+        # central filter still blocks TRACK, re-anchor the spiral at
+        # the drone's current XYZ. With a cooldown so we don't restart
+        # every time the target flashes in/out.
+        raw_visible_now = bool(last_visible)
+        just_acquired = raw_visible_now and not raw_visible_prev
+        raw_visible_prev = raw_visible_now
+
+        cooldown_ok = (
+            int(args.spiral_restart_cooldown) > 0
+            and (step - spiral_restart_step)
+            >= int(args.spiral_restart_cooldown)
+        )
+        if (state_before == 'search'
+                and just_acquired
+                and not visible_for_ctrl
+                and cooldown_ok):
+            st = app.raw_env.base_env.state
+            app.controller._reset_spiral(
+                float(st[0]), float(st[2]), float(st[4]))
+            spiral_restart_step = step
+            spiral_restart_count += 1
+            print(f"  [Step {step}] SPIRAL RESTART #{spiral_restart_count} "
+                  f"at ({st[0]:+.2f},{st[2]:+.2f},{st[4]:+.2f}) "
+                  f"— target visible but not centred")
+
+        # ── Pre-action damping ────────────────────────────────────────
         damp_now = False
         damp_label = ''
         if not args.no_velocity_damp:
-            if state_before == 'search' and state_after == 'handoff':
+            if state_before == 'search' and visible_for_ctrl:
                 damp_now = True
-                damp_label = 'SEARCH→HANDOFF'
-            elif state_before == 'handoff' and state_after == 'track':
-                damp_now = True
-                damp_label = 'HANDOFF→TRACK '
+                damp_label = ('SEARCH→TRACK  ' if ctrl.handoff_steps <= 0
+                              else 'SEARCH→HANDOFF')
+            elif state_before == 'handoff':
+                if visible_for_ctrl:
+                    if ctrl._handoff_step + 1 >= ctrl.handoff_steps:
+                        damp_now = True
+                        damp_label = 'HANDOFF→TRACK '
+                else:
+                    damp_now = True
+                    damp_label = 'HANDOFF→SEARCH'
+
         if damp_now:
             s = app.raw_env.base_env.state.copy()
             s[1] = s[3] = s[5] = 0.0    # linear vels (vx, vy, vz)
             s[10:13] = 0.0               # angular vels (wx, wy, wz)
-            # Also reset orientation to identity quaternion (level pose).
-            # During the spiral the drone leans into circular motion with
-            # roll/pitch ~0.2-0.3 rad, but v10.4 was trained with
-            # init_ang_range=0.03 rad → 8× OOD. Without this reset the
-            # tilted drone causes v10.4 to over-correct → BB_ANG violated.
-            s[6] = 1.0      # q0 (w)
-            s[7] = 0.0      # q1 (x)
-            s[8] = 0.0      # q2 (y)
-            s[9] = 0.0      # q3 (z)
+            s[6] = 1.0                   # quaternion identity (level pose)
+            s[7:10] = 0.0
             app.raw_env.base_env.state = s.copy()
             app.raw_env.base_env.previous_state = s.copy()
-            print(f"  [Step {step}] {damp_label}: vels=0, quat=identity (level)")
+            # Rebuild the visualisation and re-capture the camera so the
+            # observation that v10.4 will see reflects the clean state.
+            app.raw_env._update_visualization()
+            app.graphicsEngine.renderFrame()
+            app.raw_env._capture_camera_images(force_capture=True)
+            obs = app.raw_env._build_observation(s.astype(np.float32))
+            print(f"  [Step {step}] {damp_label}: vels=0, quat=identity "
+                  f"(pre-action damp)")
+
+        # Normalise obs (now possibly rebuilt from the damped state) and
+        # ask the controller for an action. Pass the FILTERED visibility
+        # so the controller transitions SEARCH→TRACK only when the
+        # centroid is centred (per --central-fov-radius). The raw
+        # visibility is still used while in TRACK so target loss is
+        # detected immediately.
+        obs_in = app.vec_env.normalize_obs(np.asarray(obs, dtype=np.float32))
+        act = app.controller.get_action(
+            obs_in, visible_for_ctrl, app.tracking_model, app.raw_env)
+        state_after = app.controller.current_state
 
         obs, r, term, trunc, info = app.raw_env.step(act)
         app.taskMgr.step()
@@ -476,7 +660,9 @@ def run_full_flight_demo(app, args, output_path, panel_w, panel_h):
             info['TargetSpeed'] = args.target_speed
             fpv = get_fpv_image(app.fpv_camera, panel_w, panel_h)
             bird = get_bird_image(app.ext_camera, panel_w, panel_h)
-            draw_fpv(fpv, info, panel_w, panel_h)
+            draw_fpv(fpv, info, panel_w, panel_h,
+                     central_fov_radius=float(args.central_fov_radius),
+                     centred_now=is_central_now)
             draw_bird(bird, info, panel_w, panel_h, controller_state=cs)
             frame = np.hstack([fpv, bird])
             writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
@@ -497,6 +683,7 @@ def run_full_flight_demo(app, args, output_path, panel_w, panel_h):
               f"(~{first_lock_step * 0.01:.1f} s)")
     else:
         print(f"  First lock-on:    NEVER (target not found in {step} steps)")
+    print(f"  Spiral restarts:  {spiral_restart_count}")
     print(f"  Cumulative reward {cum_reward:.1f}")
     print(f"  Saved video:      {output_path}")
 
@@ -528,7 +715,13 @@ def main():
         if args.mode == 'tracking':
             args.output_path = outdir / f"demo_tracking_speed_{speed_tag}.mp4"
         else:
-            args.output_path = outdir / f"demo_full_flight_speed_{speed_tag}.mp4"
+            scn = f"_{args.scenario}" if args.scenario else ""
+            v2_tag = "_v2" if args.use_v2 else ""
+            cfov_tag = (f"_cfov{int(round(args.central_fov_radius * 100)):02d}"
+                        if args.central_fov_radius > 0.0 else "")
+            args.output_path = outdir / (
+                f"demo_full_flight_speed_{speed_tag}"
+                f"{scn}{v2_tag}{cfov_tag}.mp4")
     else:
         args.output_path = Path(args.output_path)
 

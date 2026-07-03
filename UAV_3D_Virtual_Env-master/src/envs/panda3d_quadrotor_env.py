@@ -77,6 +77,7 @@ class Panda3DQuadrotorEnv(gym.Env):
         init_pos_range=0.5,
         init_vel_range=0.25,
         init_ang_range=0.1,
+        init_ang_vel_range=None,  # if None, defaults to init_ang_range (backward compat)
         # ── v3 centroid-obs mode ──
         centroid_obs=False,
         hover_height=1.394,
@@ -270,6 +271,12 @@ class Panda3DQuadrotorEnv(gym.Env):
         self.init_pos_range = init_pos_range
         self.init_vel_range = init_vel_range
         self.init_ang_range = init_ang_range
+        # Decouple angular-velocity init from angular-position init so we
+        # can train recovery from high yaw rate without forcing huge
+        # initial tilts. Defaults to init_ang_range if not specified.
+        self.init_ang_vel_range = (init_ang_vel_range
+                                   if init_ang_vel_range is not None
+                                   else init_ang_range)
         self._target_visible_last_step = False  # for discovery bonus
         self._prev_centering_dist = 0.0  # for centering velocity reward
 
@@ -1264,11 +1271,12 @@ class Panda3DQuadrotorEnv(gym.Env):
         if self.constrained_init and (options is None or 'det_state' not in options):
             init_state = np.zeros(13)
             pr, vr, ar = self.init_pos_range, self.init_vel_range, self.init_ang_range
+            avr = self.init_ang_vel_range
             init_state[0:5:2] = (np.random.rand(3) - 0.5) * 2 * pr
             init_state[1:6:2] = (np.random.rand(3) - 0.5) * 2 * vr
             q = euler_quat((np.random.rand(3) - 0.5) * 2 * ar)
             init_state[6:10] = q.flatten()
-            init_state[10:13] = (np.random.rand(3) - 0.5) * 2 * ar
+            init_state[10:13] = (np.random.rand(3) - 0.5) * 2 * avr
             options = {'det_state': init_state}
 
         # Reset base environment

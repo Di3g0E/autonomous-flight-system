@@ -1,19 +1,19 @@
 """
-Spiral Search Controller v2 — uses a SpiralFollowEnvV2-trained PPO model.
+Spiral Search Controller v2 — minimal delta from v1.
 
-Differences from v1
--------------------
-- Position-/altitude-invariant: when SEARCH activates, the controller
-  captures the drone's current (x, y, z) and feeds the policy
-  observations in a frame relative to that point. The trained policy
-  is invariant to absolute world position so the spiral runs correctly
-  regardless of where the target was lost.
-- Climb-then-spiral: the controller mirrors the env's two-phase logic
-  (climb_duration_steps of pure ascent, then expanding Archimedes
-  spiral). The drone gains `climb_offset` metres of altitude before
-  the spiral starts so the camera covers more ground.
+Two differences vs v1 (mirror of SpiralFollowEnvV2):
 
-State machine and replay-buffer flag are unchanged from v1.
+  1. Altitude target captured at SEARCH activation:
+         target_z = z_at_lost + climb_offset
+     instead of the fixed hover_height = 1.394 m hardcoded in v1.
+
+  2. CLIMB phase before the spiral: for `climb_duration_steps`
+     simulation steps the reference stays at (x_lost, y_lost) with
+     zero velocity, so the drone climbs `climb_offset` metres before
+     the Archimedes spiral starts expanding.
+
+Everything else (state machine, replay-buffer flag, handoff blending,
+observation layout with ABSOLUTE state) is identical to v1.
 """
 
 import math
@@ -22,7 +22,6 @@ from stable_baselines3 import PPO
 
 
 class SpiralSearchControllerV2:
-    """Manages tracking ↔ search switching with the v2 spiral policy."""
 
     TRACK = 'track'
     SEARCH = 'search'
@@ -52,22 +51,21 @@ class SpiralSearchControllerV2:
         self.vision_radius = vision_radius
         self.max_tilt = max_tilt
 
-        # Runtime state machine
+        # Runtime state
         self._state = self.TRACK
         self._invisible_count = 0
         self._handoff_step = 0
         self._last_spiral_action = np.zeros(4)
 
-        # Origin of the relative frame, captured at SEARCH activation.
-        self._x0 = 0.0
-        self._y0 = 0.0
-        self._z0 = 0.0
-
-        # Spiral / climb step counter and reference (relative frame).
+        # Spiral reference state (ABSOLUTE frame, mirrors SpiralFollowEnvV2)
         self._spiral_step = 0
         self._theta_accum = 0.0
-        self._ref_x_rel = 0.0
-        self._ref_y_rel = 0.0
+        self._center_x = 0.0
+        self._center_y = 0.0
+        self._z0 = 0.0
+        self._target_z = 0.0
+        self._ref_x = 0.0
+        self._ref_y = 0.0
         self._ref_vx = 0.0
         self._ref_vy = 0.0
 
@@ -76,22 +74,22 @@ class SpiralSearchControllerV2:
     # ── Spiral reference (mirrors SpiralFollowEnvV2) ──────────────────
 
     def _reset_spiral(self, drone_x, drone_y, drone_z):
-        """Anchor the relative frame at the drone's current XYZ."""
-        self._x0 = float(drone_x)
-        self._y0 = float(drone_y)
-        self._z0 = float(drone_z)
         self._spiral_step = 0
         self._theta_accum = 0.0
-        self._ref_x_rel = 0.0
-        self._ref_y_rel = 0.0
+        self._center_x = float(drone_x)
+        self._center_y = float(drone_y)
+        self._z0 = float(drone_z)
+        self._target_z = self._z0 + self.climb_offset
+        self._ref_x = self._center_x
+        self._ref_y = self._center_y
         self._ref_vx = 0.0
         self._ref_vy = 0.0
 
     def _advance_spiral(self, dt=0.01):
         self._spiral_step += 1
         if self._spiral_step < self.climb_duration_steps:
-            self._ref_x_rel = 0.0
-            self._ref_y_rel = 0.0
+            self._ref_x = self._center_x
+            self._ref_y = self._center_y
             self._ref_vx = 0.0
             self._ref_vy = 0.0
             return
@@ -107,29 +105,35 @@ class SpiralSearchControllerV2:
         cos_t, sin_t = math.cos(theta), math.sin(theta)
         dr = self.r_growth
 
-        self._ref_x_rel = r * cos_t
-        self._ref_y_rel = r * sin_t
+        self._ref_x = self._center_x + r * cos_t
+        self._ref_y = self._center_y + r * sin_t
         self._ref_vx = dr * cos_t - r * w * sin_t
         self._ref_vy = dr * sin_t + r * w * cos_t
 
     def _build_spiral_obs(self, state_13d):
-        """Build 18-D observation in the relative frame."""
-        state_rel = state_13d.astype(np.float32).copy()
-        state_rel[0] = state_13d[0] - self._x0
-        state_rel[2] = state_13d[2] - self._y0
-        state_rel[4] = state_13d[4] - self._z0
+        # Translate the raw state into the spiral's anchor frame so the
+        # network sees a distribution that matches training (drone
+        # initialized near origin). The dx/dy/dz features are already
+        # frame-invariant, but state[0], state[2], state[4] are not —
+        # without this translation, deploying the spiral at arbitrary
+        # (x, y, z) feeds the policy out-of-distribution coordinates,
+        # which produces erratic motor commands.
+        s = state_13d.astype(np.float32).copy()
+        s[0] = s[0] - self._center_x
+        s[2] = s[2] - self._center_y
+        s[4] = s[4] - self._z0
 
-        dx = (self._ref_x_rel - state_rel[0]) / self.vision_radius
-        dy = (self._ref_y_rel - state_rel[2]) / self.vision_radius
+        dx = (self._ref_x - state_13d[0]) / self.vision_radius
+        dy = (self._ref_y - state_13d[2]) / self.vision_radius
 
         v_mag = max(math.sqrt(self._ref_vx ** 2 + self._ref_vy ** 2), 1e-3)
         vx_n = self._ref_vx / v_mag
         vy_n = self._ref_vy / v_mag
 
-        dz_norm = (self.climb_offset - state_rel[4]) / max(self.climb_offset, 0.1)
+        dz = (self._target_z - state_13d[4]) / max(self.climb_offset, 0.1)
 
-        ref = np.array([dx, dy, vx_n, vy_n, dz_norm], dtype=np.float32)
-        return np.concatenate([state_rel, ref])
+        ref = np.array([dx, dy, vx_n, vy_n, dz], dtype=np.float32)
+        return np.concatenate([s, ref])
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -139,8 +143,13 @@ class SpiralSearchControllerV2:
         if target_visible:
             self._invisible_count = 0
             if self._state == self.SEARCH:
-                self._state = self.HANDOFF
-                self._handoff_step = 0
+                # handoff_steps <= 0 disables the blending phase: switch
+                # straight from SEARCH to TRACK.
+                if self.handoff_steps <= 0:
+                    self._state = self.TRACK
+                else:
+                    self._state = self.HANDOFF
+                    self._handoff_step = 0
             elif self._state == self.HANDOFF:
                 self._handoff_step += 1
                 if self._handoff_step >= self.handoff_steps:
@@ -169,7 +178,7 @@ class SpiralSearchControllerV2:
             self._last_spiral_action = action.copy()
             return action
 
-        # HANDOFF: linear blend spiral → RL
+        # HANDOFF
         self.store_transitions = True
         alpha = self._handoff_step / self.handoff_steps
 
@@ -195,6 +204,5 @@ class SpiralSearchControllerV2:
 
     @property
     def in_climb(self):
-        """True while the drone is gaining altitude before the spiral starts."""
         return (self._state == self.SEARCH
                 and self._spiral_step < self.climb_duration_steps)
